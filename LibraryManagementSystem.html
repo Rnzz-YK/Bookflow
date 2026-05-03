@@ -1,0 +1,2566 @@
+import javax.swing.*;
+import javax.swing.border.*;
+import javax.swing.table.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.time.*;
+import java.time.format.*;
+import java.time.temporal.*;
+import java.util.*;
+import java.util.List;
+import java.util.stream.*;
+
+public class LibraryManagementSystem extends JFrame {
+
+    static final Color NAVY = new Color(18, 33, 70);
+    static final Color BLUE = new Color(52, 152, 219);
+    static final Color LIGHT = new Color(245, 247, 250);
+    static final Color WHITE = Color.WHITE;
+    static final Color GREEN = new Color(39, 174, 96);
+    static final Color RED = new Color(192, 57, 43);
+    static final Color GOLD = new Color(200, 140, 10);
+    static final Color SIDEBAR = new Color(12, 24, 55);
+    static final Color ORANGE = new Color(211, 84, 0);
+
+    // Transaction row colors
+    static final Color ROW_GREEN = new Color(220, 255, 225); // Active, on time
+    static final Color ROW_YELLOW = new Color(255, 253, 200); // Due in 3 days
+    static final Color ROW_ORANGE = new Color(255, 225, 190); // Due tomorrow / today
+    static final Color ROW_RED = new Color(255, 210, 210); // Overdue
+    static final Color ROW_GRAY = new Color(235, 235, 235); // Returned
+
+    static final String F_STUDENTS = "lib_students.txt";
+    static final String F_ADMINS = "lib_admins.txt";
+    static final String F_BOOKS = "lib_books.txt";
+    static final String F_TRANS = "lib_transactions.txt";
+    static final String F_PENALTIES = "lib_penalties.txt";
+    static final String F_HISTORY = "lib_history.txt";
+
+    static final String[] CATEGORIES = {
+            "All Categories", "Engineering & Technology", "Science", "Mathematics",
+            "English & Communication", "Filipino & Philippine Studies", "Business & Management",
+            "Education", "Romance", "Fantasy & Science Fiction", "Horror & Thriller",
+            "Children's Literature", "Self-Help & Motivation", "History & Social Studies",
+            "Health & Medical", "Law & Political Science", "Arts & Music", "Psychology", "Reference"
+    };
+
+    // ── DAILY FINE RATES ──────────────────────────
+    static final double FINE_RATE_LOW = 5.0; // Days 1-14
+    static final double FINE_RATE_HIGH = 10.0; // Days 15-30
+    static final int WARN1_DAYS = 7;
+    static final int WARN2_DAYS = 14;
+    static final int WARN3_DAYS = 30;
+
+    // ── DATA CLASSES ─────────────────────────────
+    static class Student {
+        String name, number, email, program, password;
+        LocalDateTime timeIn = null;
+        int warningCount = 0; // 0=none, 1=1st, 2=2nd, 3=3rd/Final, 4=Critical
+
+        Student(String n, String num, String e, String p, String pass) {
+            name = n;
+            number = num;
+            email = e;
+            program = p;
+            password = pass;
+        }
+
+        String toFile() {
+            return name + "|" + number + "|" + email + "|" + program + "|" + password + "|" + warningCount;
+        }
+
+        static Student parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 5)
+                return null;
+            Student s = new Student(d[0], d[1], d[2], d[3], d[4]);
+            if (d.length >= 6) {
+                try {
+                    s.warningCount = Integer.parseInt(d[5]);
+                } catch (Exception ignored) {
+                }
+            }
+            return s;
+        }
+
+        String warningLabel() {
+            switch (warningCount) {
+                case 1:
+                    return "1st Warning";
+                case 2:
+                    return "2nd Warning";
+                case 3:
+                    return "3rd Warning";
+                case 4:
+                    return "CRITICAL — Permanently Blocked";
+                default:
+                    return "None";
+            }
+        }
+    }
+
+    static class Admin {
+        String name, password, email, contact;
+
+        Admin(String n, String p, String e, String c) {
+            name = n;
+            password = p;
+            email = e;
+            contact = c;
+        }
+
+        String toFile() {
+            return name + "|" + password + "|" + email + "|" + contact;
+        }
+
+        static Admin parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 4)
+                return null;
+            return new Admin(d[0], d[1], d[2], d[3]);
+        }
+    }
+
+    static class Book {
+        String no, name, author, category;
+        int stock;
+        boolean damaged = false;
+        double price = 500.0; // default price
+
+        Book(String no, String n, String a, String cat, int s) {
+            this.no = no;
+            name = n;
+            author = a;
+            category = cat;
+            stock = s;
+        }
+
+        Book(String no, String n, String a, String cat, int s, double price) {
+            this.no = no;
+            name = n;
+            author = a;
+            category = cat;
+            stock = s;
+            this.price = price;
+        }
+
+        String status() {
+            return damaged ? "Damaged" : (stock > 0 ? "Available" : "Not Available");
+        }
+
+        String toFile() {
+            return no + "|" + name + "|" + author + "|" + category + "|" + stock + "|" + (damaged ? "1" : "0") + "|"
+                    + price;
+        }
+
+        static Book parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 6)
+                return null;
+            Book b = new Book(d[0], d[1], d[2], d[3], Integer.parseInt(d[4]));
+            b.damaged = d[5].equals("1");
+            if (d.length >= 7) {
+                try {
+                    b.price = Double.parseDouble(d[6]);
+                } catch (Exception ignored) {
+                }
+            }
+            return b;
+        }
+    }
+
+    static class Transaction {
+        String student, studentNum, bookNo, bookName, author,
+                borrowDate, expectedReturn, returnedDate = "";
+        boolean returned = false;
+
+        String toFile() {
+            return student + "|" + studentNum + "|" + bookNo + "|" + bookName + "|" + author + "|"
+                    + borrowDate + "|" + expectedReturn + "|" + returnedDate + "|" + (returned ? "1" : "0");
+        }
+
+        static Transaction parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 9)
+                return null;
+            Transaction t = new Transaction();
+            t.student = d[0];
+            t.studentNum = d[1];
+            t.bookNo = d[2];
+            t.bookName = d[3];
+            t.author = d[4];
+            t.borrowDate = d[5];
+            t.expectedReturn = d[6];
+            t.returnedDate = d[7];
+            t.returned = d[8].equals("1");
+            return t;
+        }
+
+        // Returns days overdue (negative = not yet overdue, 0 = due today)
+        long daysOverdue() {
+            if (returned)
+                return -999;
+            try {
+                LocalDate due = LocalDate.parse(expectedReturn);
+                return ChronoUnit.DAYS.between(due, LocalDate.now());
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        // Returns color based on status
+        Color rowColor() {
+            if (returned)
+                return ROW_GRAY;
+            long diff = daysOverdue();
+            if (diff > 0)
+                return ROW_RED;
+            if (diff == 0)
+                return ROW_ORANGE;
+            if (diff >= -1)
+                return ROW_ORANGE;
+            if (diff >= -3)
+                return ROW_YELLOW;
+            return ROW_GREEN;
+        }
+
+        String statusLabel() {
+            if (returned)
+                return "Returned";
+            long d = daysOverdue();
+            if (d > WARN3_DAYS)
+                return "CRITICAL";
+            if (d > WARN2_DAYS)
+                return "3rd Warning";
+            if (d > WARN1_DAYS)
+                return "2nd Warning";
+            if (d > 0)
+                return "1st Warning";
+            if (d == 0)
+                return "Due Today!";
+            if (d >= -1)
+                return "Due Tomorrow";
+            if (d >= -3)
+                return "Due Soon";
+            return "Active";
+        }
+
+        // Auto-compute overdue fine based on days overdue
+        double computeOverdueFine() {
+            long days = daysOverdue();
+            if (days <= 0)
+                return 0;
+            double fine = 0;
+            if (days <= WARN2_DAYS) {
+                fine = days * FINE_RATE_LOW;
+            } else if (days <= WARN3_DAYS) {
+                fine = WARN2_DAYS * FINE_RATE_LOW + (days - WARN2_DAYS) * FINE_RATE_HIGH;
+            } else {
+                fine = WARN2_DAYS * FINE_RATE_LOW + (WARN3_DAYS - WARN2_DAYS) * FINE_RATE_HIGH;
+                // Capped at 30 days for computation; admin handles beyond
+            }
+            return fine;
+        }
+    }
+
+    static class Penalty {
+        String student, studentNum, bookName, reason, date;
+        double amount;
+        boolean settled = false;
+
+        Penalty(String s, String sn, String b, String r, double a) {
+            student = s;
+            studentNum = sn;
+            bookName = b;
+            reason = r;
+            amount = a;
+            date = LocalDate.now().toString();
+        }
+
+        String toFile() {
+            return student + "|" + studentNum + "|" + bookName + "|" + reason + "|" + amount + "|" + date + "|"
+                    + (settled ? "1" : "0");
+        }
+
+        static Penalty parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 7)
+                return null;
+            Penalty p = new Penalty(d[0], d[1], d[2], d[3], Double.parseDouble(d[4]));
+            p.date = d[5];
+            p.settled = d[6].equals("1");
+            return p;
+        }
+    }
+
+    static class HistoryEntry {
+        String name, program, date, timeIn, timeOut;
+
+        HistoryEntry(String n, String p, String d, String ti, String to) {
+            name = n;
+            program = p;
+            date = d;
+            timeIn = ti;
+            timeOut = to;
+        }
+
+        String toFile() {
+            return name + "|" + program + "|" + date + "|" + timeIn + "|" + timeOut;
+        }
+
+        static HistoryEntry parse(String l) {
+            String[] d = l.split("\\|", -1);
+            if (d.length < 5)
+                return null;
+            return new HistoryEntry(d[0], d[1], d[2], d[3], d[4]);
+        }
+    }
+
+    // ── LISTS & MODELS ────────────────────────────
+    List<Student> students = new ArrayList<>();
+    List<Admin> admins = new ArrayList<>();
+    List<Book> books = new ArrayList<>();
+    List<Transaction> transactions = new ArrayList<>();
+    List<Penalty> penalties = new ArrayList<>();
+    List<HistoryEntry> history = new ArrayList<>();
+
+    DefaultTableModel historyModel = new DefaultTableModel(
+            new String[] { "Name", "Program", "Date", "Time In", "Time Out" }, 0);
+    DefaultTableModel bookModel = new DefaultTableModel(
+            new String[] { "Book No", "Book Name", "Author", "Category", "Stock", "Price", "Status" }, 0);
+    DefaultTableModel studentModel = new DefaultTableModel(
+            new String[] { "Name", "Student No", "Program", "Email", "Warning Level" }, 0);
+    DefaultTableModel transModel = new DefaultTableModel(
+            new String[] { "Student", "Stud. No", "Book No", "Book Name", "Borrow Date", "Expected Return", "Returned",
+                    "Status" },
+            0);
+    DefaultTableModel penaltyModel = new DefaultTableModel(
+            new String[] { "Student", "Stud. No", "Book", "Reason", "Amount", "Date", "Status" }, 0);
+
+    DateTimeFormatter timeFmt = DateTimeFormatter.ofPattern("hh:mm a");
+    DateTimeFormatter dateFmt = DateTimeFormatter.ofPattern("MMM dd yyyy");
+    CardLayout card = new CardLayout();
+    JPanel mainPanel = new JPanel(card);
+
+    // ── CONSTRUCTOR ───────────────────────────────
+    public LibraryManagementSystem() {
+        setTitle("BookFlow — RTU Library Management System | Group 2");
+        setSize(1150, 730);
+        setMinimumSize(new Dimension(960, 640));
+        setLocationRelativeTo(null);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        loadAll();
+        seedAdmin();
+        seedBooks();
+        add(mainPanel);
+        mainPanel.add(homePage(), "HOME");
+        mainPanel.add(adminChoice(), "ADMIN");
+        mainPanel.add(studentMenu(), "STUDENT");
+        mainPanel.add(bookPublicView(), "BOOKS");
+        card.show(mainPanel, "HOME");
+        setVisible(true);
+
+        // ── AUTO ESCALATION TIMER ──────────────────────────────────────────
+        // Automatically checks and escalates warnings every 60 seconds
+        // so warningCount stays current without manual admin intervention.
+        javax.swing.Timer autoEscalate = new javax.swing.Timer(60_000, e -> {
+            checkAndEscalateWarnings();
+            refreshTransactionStatuses();
+        });
+        autoEscalate.setRepeats(true);
+        autoEscalate.start();
+    }
+
+    // ── PERSISTENCE ───────────────────────────────
+    <T> List<T> loadFile(String fn, java.util.function.Function<String, T> parser) {
+        List<T> list = new ArrayList<>();
+        File f = new File(fn);
+        if (!f.exists())
+            return list;
+        try (BufferedReader br = new BufferedReader(new FileReader(f))) {
+            String l;
+            while ((l = br.readLine()) != null)
+                if (!l.trim().isEmpty()) {
+                    T it = parser.apply(l.trim());
+                    if (it != null)
+                        list.add(it);
+                }
+        } catch (Exception ignored) {
+        }
+        return list;
+    }
+
+    void saveFile(String fn, List<?> list, java.util.function.Function<Object, String> fn2) {
+        try (PrintWriter pw = new PrintWriter(new FileWriter(fn))) {
+            for (Object o : list)
+                pw.println(fn2.apply(o));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    void loadAll() {
+        students = loadFile(F_STUDENTS, Student::parse);
+        admins = loadFile(F_ADMINS, Admin::parse);
+        books = loadFile(F_BOOKS, Book::parse);
+        transactions = loadFile(F_TRANS, Transaction::parse);
+        penalties = loadFile(F_PENALTIES, Penalty::parse);
+        history = loadFile(F_HISTORY, HistoryEntry::parse);
+
+        for (Student s : students)
+            studentModel.addRow(new Object[] { s.name, s.number, s.program, s.email, s.warningLabel() });
+        for (Book b : books)
+            bookModel.addRow(new Object[] { b.no, b.name, b.author, b.category, b.stock,
+                    String.format("₱%.2f", b.price), b.status() });
+        for (Transaction t : transactions)
+            transModel.addRow(new Object[] { t.student, t.studentNum, t.bookNo, t.bookName,
+                    t.borrowDate, t.expectedReturn,
+                    t.returnedDate.isEmpty() ? "—" : t.returnedDate,
+                    t.statusLabel() });
+        for (Penalty p : penalties)
+            penaltyModel.addRow(new Object[] { p.student, p.studentNum, p.bookName, p.reason,
+                    String.format("₱%.2f", p.amount), p.date, p.settled ? "Settled" : "Pending" });
+        for (HistoryEntry h : history)
+            historyModel.addRow(new Object[] { h.name, h.program, h.date, h.timeIn, h.timeOut });
+    }
+
+    void saveStudents() {
+        saveFile(F_STUDENTS, students, o -> ((Student) o).toFile());
+    }
+
+    void saveAdmins() {
+        saveFile(F_ADMINS, admins, o -> ((Admin) o).toFile());
+    }
+
+    void saveBooks() {
+        saveFile(F_BOOKS, books, o -> ((Book) o).toFile());
+    }
+
+    void saveTransactions() {
+        saveFile(F_TRANS, transactions, o -> ((Transaction) o).toFile());
+    }
+
+    void savePenalties() {
+        saveFile(F_PENALTIES, penalties, o -> ((Penalty) o).toFile());
+    }
+
+    void saveHistory() {
+        saveFile(F_HISTORY, history, o -> ((HistoryEntry) o).toFile());
+    }
+
+    // ── SEED ──────────────────────────────────────
+    void seedAdmin() {
+        for (Admin a : admins)
+            if (a.name.equals("admin"))
+                return;
+        admins.add(new Admin("admin", "admin123", "admin@rtu.edu.ph", "09000000000"));
+        saveAdmins();
+    }
+
+    void seedBooks() {
+        if (!books.isEmpty())
+            return;
+        String ENG = "Engineering & Technology", SCI = "Science", MAT = "Mathematics",
+                EN2 = "English & Communication", FIL = "Filipino & Philippine Studies",
+                BUS = "Business & Management", EDU = "Education",
+                ROM = "Romance", FAN = "Fantasy & Science Fiction",
+                HOR = "Horror & Thriller", CHI = "Children's Literature",
+                SLF = "Self-Help & Motivation", HIS = "History & Social Studies",
+                HLT = "Health & Medical", LAW = "Law & Political Science",
+                ART = "Arts & Music", PSY = "Psychology", REF = "Reference";
+
+        bk("E001", "Engineering Mathematics Vol.1", "Romeo Tiong", ENG, 5, 850);
+        bk("E002", "Engineering Mathematics Vol.2", "Romeo Tiong", ENG, 4, 850);
+        bk("E003", "Fundamentals of Electric Circuits", "Alexander & Sadiku", ENG, 4, 1200);
+        bk("E004", "Introduction to Algorithms (3rd Ed.)", "Cormen et al.", ENG, 3, 1500);
+        bk("E005", "Computer Organization and Architecture", "William Stallings", ENG, 4, 1100);
+        bk("E006", "Data Structures and Algorithms in Java", "Robert Lafore", ENG, 5, 980);
+        bk("E007", "Engineering Mechanics: Statics", "Meriam & Kraige", ENG, 3, 1050);
+        bk("E008", "Engineering Mechanics: Dynamics", "Meriam & Kraige", ENG, 3, 1050);
+        bk("E009", "Mechanics of Materials", "Beer & Johnston", ENG, 4, 1200);
+        bk("E010", "Digital Electronics", "Roger Tokheim", ENG, 3, 900);
+        bk("E011", "Database System Concepts (7th Ed.)", "Silberschatz et al.", ENG, 4, 1400);
+        bk("E012", "Software Engineering (10th Ed.)", "Ian Sommerville", ENG, 3, 1300);
+        bk("E013", "Thermodynamics: An Engineering Approach", "Cengel & Boles", ENG, 3, 1350);
+        bk("E014", "Fluid Mechanics", "Frank White", ENG, 3, 1100);
+        bk("E015", "Computer Networks (5th Ed.)", "Andrew Tanenbaum", ENG, 3, 1250);
+        bk("E016", "Operating System Concepts", "Silberschatz et al.", ENG, 4, 1200);
+        bk("E017", "Artificial Intelligence: A Modern Approach", "Russell & Norvig", ENG, 3, 1600);
+        bk("E018", "Clean Code", "Robert C. Martin", ENG, 4, 750);
+        bk("E019", "Python Crash Course (3rd Ed.)", "Eric Matthes", ENG, 5, 800);
+        bk("E020", "Java: The Complete Reference", "Herbert Schildt", ENG, 5, 950);
+        bk("S001", "University Physics Vol.1", "Young & Freedman", SCI, 5, 1100);
+        bk("S002", "University Physics Vol.2", "Young & Freedman", SCI, 5, 1100);
+        bk("S003", "Chemistry: The Central Science", "Brown et al.", SCI, 4, 1200);
+        bk("S004", "General Chemistry (8th Ed.)", "Silberberg", SCI, 4, 1150);
+        bk("S005", "Biology: Life on Earth", "Audesirk et al.", SCI, 3, 1000);
+        bk("S006", "Campbell Biology (12th Ed.)", "Urry et al.", SCI, 3, 1400);
+        bk("S007", "Astronomy Today", "Chaisson & McMillan", SCI, 4, 900);
+        bk("S008", "Environmental Science", "Wright & Boorse", SCI, 3, 850);
+        bk("S009", "Organic Chemistry", "Wade & Simek", SCI, 3, 1300);
+        bk("S010", "Human Anatomy and Physiology", "Marieb & Hoehn", SCI, 4, 1250);
+        bk("S011", "Microbiology: An Introduction", "Tortora et al.", SCI, 3, 1100);
+        bk("S012", "A Brief History of Time", "Stephen Hawking", SCI, 5, 450);
+        bk("S013", "Cosmos: A Personal Voyage", "Carl Sagan", SCI, 4, 500);
+        bk("S014", "The Selfish Gene", "Richard Dawkins", SCI, 4, 480);
+        bk("S015", "What If?", "Randall Munroe", SCI, 4, 420);
+        bk("M001", "Calculus: Early Transcendentals", "James Stewart", MAT, 6, 1200);
+        bk("M002", "Calculus (10th Ed.)", "Larson & Edwards", MAT, 5, 1150);
+        bk("M003", "Discrete Mathematics", "Kenneth Rosen", MAT, 4, 1100);
+        bk("M004", "Linear Algebra", "David Lay", MAT, 4, 950);
+        bk("M005", "Probability and Statistics for Engineers", "Walpole et al.", MAT, 4, 1000);
+        bk("M006", "Advanced Engineering Mathematics", "Erwin Kreyszig", MAT, 3, 1300);
+        bk("M007", "Differential Equations", "Boyce & DiPrima", MAT, 3, 1050);
+        bk("M008", "Numerical Methods for Engineers", "Chapra & Canale", MAT, 3, 1100);
+        bk("M009", "The Art of Problem Solving Vol.1", "Rusczyk", MAT, 3, 700);
+        bk("M010", "How to Prove It", "Daniel Velleman", MAT, 3, 650);
+        bk("M011", "Mathematical Statistics", "Wackerly et al.", MAT, 3, 950);
+        bk("M012", "Graph Theory", "Bondy & Murty", MAT, 2, 900);
+        bk("EN01", "Technical Writing and Communication", "Lannon & Gurak", EN2, 5, 700);
+        bk("EN02", "The Elements of Style", "Strunk & White", EN2, 6, 300);
+        bk("EN03", "English Grammar in Use", "Raymond Murphy", EN2, 6, 550);
+        bk("EN04", "Academic English for University Students", "Anthony Manning", EN2, 4, 600);
+        bk("EN05", "Business English", "Mary Ellen Guffey", EN2, 3, 650);
+        bk("EN06", "How to Write a Thesis", "Umberto Eco", EN2, 4, 480);
+        bk("EN07", "Eats, Shoots and Leaves", "Lynne Truss", EN2, 4, 400);
+        bk("EN08", "Bird by Bird", "Anne Lamott", EN2, 3, 420);
+        bk("EN09", "On Writing: A Memoir of the Craft", "Stephen King", EN2, 4, 450);
+        bk("EN10", "Effective Communication in the Workplace", "David Nickson", EN2, 3, 500);
+        bk("F001", "Noli Me Tangere", "Jose Rizal", FIL, 8, 350);
+        bk("F002", "El Filibusterismo", "Jose Rizal", FIL, 7, 350);
+        bk("F003", "Florante at Laura", "Francisco Balagtas", FIL, 6, 280);
+        bk("F004", "Ibong Adarna", "Anonymous", FIL, 6, 280);
+        bk("F005", "Philippine History", "Teodoro Agoncillo", FIL, 5, 600);
+        bk("F006", "ABNKKBSNPLAko?! Book 1", "Bob Ong", FIL, 7, 320);
+        bk("F007", "Stainless Longganisa", "Bob Ong", FIL, 6, 300);
+        bk("F008", "MacArthur", "Bob Ong", FIL, 6, 300);
+        bk("F009", "Ang Paboritong Libro ni Hudas", "Bob Ong", FIL, 5, 320);
+        bk("F010", "Dekada 70", "Lualhati Bautista", FIL, 4, 380);
+        bk("F011", "Luha ng Buwaya", "Amado Hernandez", FIL, 4, 350);
+        bk("F012", "Panitikan ng Pilipinas", "Virgilio Almario", FIL, 3, 500);
+        bk("B001", "Principles of Management", "Robbins & Coulter", BUS, 4, 900);
+        bk("B002", "Accounting Principles", "Weygandt et al.", BUS, 4, 1100);
+        bk("B003", "Financial Accounting", "Libby et al.", BUS, 3, 1050);
+        bk("B004", "Business Law", "Clarkson & Cross", BUS, 3, 950);
+        bk("B005", "Entrepreneurship", "Kuratko", BUS, 3, 850);
+        bk("B006", "Human Resource Management", "Gary Dessler", BUS, 3, 900);
+        bk("B007", "Marketing Management", "Philip Kotler", BUS, 3, 1000);
+        bk("B008", "Organizational Behavior", "Robbins & Judge", BUS, 3, 850);
+        bk("B009", "Operations Management", "Heizer et al.", BUS, 3, 900);
+        bk("B010", "Corporate Finance", "Brealey et al.", BUS, 3, 1100);
+        bk("ED01", "Principles of Teaching 1 & 2", "Corpuz & Salandanan", EDU, 5, 700);
+        bk("ED02", "Child and Adolescent Development", "Corpuz et al.", EDU, 4, 650);
+        bk("ED03", "Assessment of Learning 1", "Navarro & Santos", EDU, 4, 600);
+        bk("ED04", "Facilitating Learner-Centered Teaching", "Navarro et al.", EDU, 3, 620);
+        bk("ED05", "Special Education in the Philippines", "Abulon & Cainglet", EDU, 3, 680);
+        bk("ED06", "Educational Psychology", "Anita Woolfolk", EDU, 3, 850);
+        bk("ED07", "Curriculum Development", "Ornstein & Hunkins", EDU, 3, 800);
+        bk("ED08", "The Courage to Teach", "Parker J. Palmer", EDU, 3, 480);
+        bk("R001", "Pride and Prejudice", "Jane Austen", ROM, 5, 380);
+        bk("R002", "Me Before You", "Jojo Moyes", ROM, 4, 420);
+        bk("R003", "The Notebook", "Nicholas Sparks", ROM, 4, 400);
+        bk("R004", "It Ends with Us", "Colleen Hoover", ROM, 5, 450);
+        bk("R005", "November 9", "Colleen Hoover", ROM, 4, 430);
+        bk("R006", "Ugly Love", "Colleen Hoover", ROM, 4, 430);
+        bk("R007", "The Hating Game", "Sally Thorne", ROM, 4, 420);
+        bk("R008", "Beach Read", "Emily Henry", ROM, 3, 410);
+        bk("R009", "The Kiss Quotient", "Helen Hoang", ROM, 3, 400);
+        bk("R010", "A Walk to Remember", "Nicholas Sparks", ROM, 4, 390);
+        bk("R011", "Sense and Sensibility", "Jane Austen", ROM, 4, 370);
+        bk("R012", "Wuthering Heights", "Emily Bronte", ROM, 4, 360);
+        bk("FA01", "Harry Potter and the Sorcerer's Stone", "J.K. Rowling", FAN, 5, 500);
+        bk("FA02", "Harry Potter: Chamber of Secrets", "J.K. Rowling", FAN, 4, 500);
+        bk("FA03", "Harry Potter: Prisoner of Azkaban", "J.K. Rowling", FAN, 4, 500);
+        bk("FA04", "The Hobbit", "J.R.R. Tolkien", FAN, 4, 450);
+        bk("FA05", "The Fellowship of the Ring", "J.R.R. Tolkien", FAN, 3, 480);
+        bk("FA06", "Dune", "Frank Herbert", FAN, 4, 490);
+        bk("FA07", "Ender's Game", "Orson Scott Card", FAN, 4, 420);
+        bk("FA08", "A Court of Thorns and Roses", "Sarah J. Maas", FAN, 5, 460);
+        bk("FA09", "1984", "George Orwell", FAN, 5, 380);
+        bk("FA10", "Brave New World", "Aldous Huxley", FAN, 4, 370);
+        bk("FA11", "Mistborn: The Final Empire", "Brandon Sanderson", FAN, 3, 480);
+        bk("FA12", "Fahrenheit 451", "Ray Bradbury", FAN, 4, 360);
+        bk("H001", "It", "Stephen King", HOR, 3, 520);
+        bk("H002", "The Shining", "Stephen King", HOR, 4, 480);
+        bk("H003", "Carrie", "Stephen King", HOR, 3, 420);
+        bk("H004", "Pet Sematary", "Stephen King", HOR, 3, 450);
+        bk("H005", "Gone Girl", "Gillian Flynn", HOR, 4, 440);
+        bk("H006", "The Girl with the Dragon Tattoo", "Stieg Larsson", HOR, 3, 480);
+        bk("H007", "Bird Box", "Josh Malerman", HOR, 3, 400);
+        bk("H008", "The Silent Patient", "Alex Michaelides", HOR, 4, 430);
+        bk("H009", "And Then There Were None", "Agatha Christie", HOR, 4, 390);
+        bk("H010", "Frankenstein", "Mary Shelley", HOR, 4, 360);
+        bk("C001", "Charlotte's Web", "E.B. White", CHI, 5, 320);
+        bk("C002", "The Very Hungry Caterpillar", "Eric Carle", CHI, 5, 280);
+        bk("C003", "Matilda", "Roald Dahl", CHI, 5, 350);
+        bk("C004", "The Little Prince", "Antoine de Saint-Exupery", CHI, 6, 300);
+        bk("C005", "Where the Wild Things Are", "Maurice Sendak", CHI, 5, 290);
+        bk("C006", "Charlie and the Chocolate Factory", "Roald Dahl", CHI, 4, 340);
+        bk("C007", "James and the Giant Peach", "Roald Dahl", CHI, 4, 330);
+        bk("C008", "Winnie-the-Pooh", "A.A. Milne", CHI, 5, 310);
+        bk("C009", "Alice's Adventures in Wonderland", "Lewis Carroll", CHI, 5, 300);
+        bk("C010", "The Giving Tree", "Shel Silverstein", CHI, 5, 290);
+        bk("SH01", "The 7 Habits of Highly Effective People", "Stephen Covey", SLF, 5, 520);
+        bk("SH02", "Atomic Habits", "James Clear", SLF, 6, 490);
+        bk("SH03", "Rich Dad Poor Dad", "Robert Kiyosaki", SLF, 5, 450);
+        bk("SH04", "Think and Grow Rich", "Napoleon Hill", SLF, 4, 420);
+        bk("SH05", "How to Win Friends and Influence People", "Dale Carnegie", SLF, 5, 440);
+        bk("SH06", "The Alchemist", "Paulo Coelho", SLF, 5, 400);
+        bk("SH07", "Man's Search for Meaning", "Viktor Frankl", SLF, 4, 420);
+        bk("SH08", "Mindset", "Carol Dweck", SLF, 4, 460);
+        bk("SH09", "Deep Work", "Cal Newport", SLF, 4, 480);
+        bk("SH10", "Grit", "Angela Duckworth", SLF, 3, 450);
+        bk("SH11", "Subtle Art of Not Giving a F*ck", "Mark Manson", SLF, 4, 440);
+        bk("SH12", "Emotional Intelligence", "Daniel Goleman", SLF, 4, 470);
+        bk("HS01", "Sapiens: A Brief History of Humankind", "Yuval Harari", HIS, 5, 520);
+        bk("HS02", "Guns, Germs and Steel", "Jared Diamond", HIS, 4, 500);
+        bk("HS03", "World History: Patterns of Interaction", "Beck et al.", HIS, 4, 800);
+        bk("HS04", "Kasaysayan ng Pilipinas", "Zeus Salazar", HIS, 5, 600);
+        bk("HS05", "Homo Deus", "Yuval Harari", HIS, 4, 510);
+        bk("HS06", "21 Lessons for the 21st Century", "Yuval Harari", HIS, 4, 500);
+        bk("HS07", "The Art of War", "Sun Tzu", HIS, 5, 320);
+        bk("HS08", "Philippine Revolution: A History", "Teodoro Agoncillo", HIS, 4, 580);
+        bk("HM01", "Nutrition: Concepts and Controversies", "Sizer & Whitney", HLT, 4, 900);
+        bk("HM02", "The Body: A Guide for Occupants", "Bill Bryson", HLT, 4, 480);
+        bk("HM03", "Being Mortal", "Atul Gawande", HLT, 3, 460);
+        bk("HM04", "When Breath Becomes Air", "Paul Kalanithi", HLT, 4, 440);
+        bk("HM05", "Mosby's Medical Dictionary", "Elsevier", HLT, 3, 1200);
+        bk("HM06", "Mental Health Nursing", "Videbeck", HLT, 3, 950);
+        bk("L001", "Philippine Constitution (Annotated)", "Joaquin Bernas SJ", LAW, 4, 750);
+        bk("L002", "Revised Penal Code", "Aquino", LAW, 4, 700);
+        bk("L003", "Introduction to Political Science", "Remigio Agpalo", LAW, 4, 650);
+        bk("L004", "Introduction to Law", "Jurado", LAW, 4, 620);
+        bk("L005", "Human Rights: A Very Short Introduction", "Andrew Clapham", LAW, 3, 480);
+        bk("L006", "The Federalist Papers", "Hamilton et al.", LAW, 3, 500);
+        bk("A001", "The Story of Art", "E.H. Gombrich", ART, 4, 700);
+        bk("A002", "Ways of Seeing", "John Berger", ART, 4, 460);
+        bk("A003", "How Music Works", "David Byrne", ART, 3, 500);
+        bk("A004", "Drawing on the Right Side of the Brain", "Betty Edwards", ART, 4, 520);
+        bk("A005", "This Is Your Brain on Music", "Daniel Levitin", ART, 3, 480);
+        bk("P001", "Psychology (12th Ed.)", "Myers & DeWall", PSY, 5, 1100);
+        bk("P002", "Thinking, Fast and Slow", "Daniel Kahneman", PSY, 5, 520);
+        bk("P003", "The Psychology of Money", "Morgan Housel", PSY, 5, 480);
+        bk("P004", "Influence: Psychology of Persuasion", "Robert Cialdini", PSY, 4, 500);
+        bk("P005", "Social Psychology", "Elliot Aronson", PSY, 3, 900);
+        bk("P006", "The Interpretation of Dreams", "Sigmund Freud", PSY, 3, 480);
+        bk("REF1", "Merriam-Webster Collegiate Dictionary", "Merriam-Webster", REF, 3, 600);
+        bk("REF2", "The Oxford English Dictionary", "Oxford University Press", REF, 2, 1500);
+        bk("REF3", "Roget's Thesaurus", "Roget", REF, 3, 550);
+        bk("REF4", "World Almanac and Book of Facts 2024", "World Almanac", REF, 2, 700);
+        bk("REF5", "Philippine Almanac", "National Statistics Office", REF, 3, 500);
+        saveBooks();
+        System.out.println("Seeded " + books.size() + " books.");
+    }
+
+    void bk(String no, String name, String author, String cat, int stock, double price) {
+        Book b = new Book(no, name, author, cat, stock, price);
+        books.add(b);
+        bookModel.addRow(new Object[] { b.no, b.name, b.author, b.category, b.stock,
+                String.format("₱%.2f", b.price), b.status() });
+    }
+
+    // ── HELPERS ───────────────────────────────────
+    boolean hasPendingPenalty(String sn) {
+        return penalties.stream().anyMatch(p -> p.studentNum.equals(sn) && !p.settled);
+    }
+
+    boolean isCriticalBlocked(String sn) {
+        Student s = findStudent(sn);
+        return s != null && s.warningCount >= 4;
+    }
+
+    boolean canBorrow(String sn) {
+        return !hasPendingPenalty(sn) && !isCriticalBlocked(sn);
+    }
+
+    Student findStudent(String n) {
+        return students.stream().filter(s -> s.number.equals(n)).findFirst().orElse(null);
+    }
+
+    Book findBook(String n) {
+        return books.stream().filter(b -> b.no.equals(n)).findFirst().orElse(null);
+    }
+
+    int bookModelRow(String no) {
+        for (int i = 0; i < bookModel.getRowCount(); i++)
+            if (no.equals(bookModel.getValueAt(i, 0)))
+                return i;
+        return -1;
+    }
+
+    int studentModelRow(String num) {
+        for (int i = 0; i < studentModel.getRowCount(); i++)
+            if (num.equals(studentModel.getValueAt(i, 1)))
+                return i;
+        return -1;
+    }
+
+    // ── WARNING ESCALATION ────────────────────────
+    void checkAndEscalateWarnings() {
+        for (Transaction t : transactions) {
+            if (t.returned)
+                continue;
+            long days = t.daysOverdue();
+            if (days <= 0)
+                continue;
+            Student s = findStudent(t.studentNum);
+            if (s == null)
+                continue;
+            int newLevel;
+            if (days > WARN3_DAYS)
+                newLevel = 4;
+            else if (days > WARN2_DAYS)
+                newLevel = 3;
+            else if (days > WARN1_DAYS)
+                newLevel = 2;
+            else
+                newLevel = 1;
+            if (newLevel > s.warningCount) {
+                s.warningCount = newLevel;
+                int smr = studentModelRow(s.number);
+                if (smr >= 0)
+                    studentModel.setValueAt(s.warningLabel(), smr, 4);
+            }
+        }
+        saveStudents();
+    }
+
+    // ── RECALCULATE WARNING ON RETURN ─────────────────────────────────────
+    // Called after a book is returned so warningCount can decrease when
+    // the student resolves their overdue books.
+    void recalculateWarningOnReturn(String studentNum) {
+        Student s = findStudent(studentNum);
+        if (s == null) return;
+
+        int maxLevel = 0;
+        for (Transaction t : transactions) {
+            if (t.returned || !t.studentNum.equals(studentNum)) continue;
+            long days = t.daysOverdue();
+            if (days <= 0) continue;
+            int level;
+            if (days > WARN3_DAYS) level = 4;
+            else if (days > WARN2_DAYS) level = 3;
+            else if (days > WARN1_DAYS) level = 2;
+            else level = 1;
+            if (level > maxLevel) maxLevel = level;
+        }
+
+        // Only reduce — escalation is handled by checkAndEscalateWarnings()
+        if (maxLevel < s.warningCount) {
+            s.warningCount = maxLevel;
+            int smr = studentModelRow(s.number);
+            if (smr >= 0)
+                studentModel.setValueAt(s.warningLabel(), smr, 4);
+            saveStudents();
+        }
+    }
+
+    // Refresh all transaction statuses in the model
+    void refreshTransactionStatuses() {
+        for (int i = 0; i < transactions.size(); i++) {
+            Transaction t = transactions.get(i);
+            transModel.setValueAt(t.statusLabel(), i, 7);
+        }
+    }
+
+    // ── NOTIFICATION BANNER ───────────────────────
+    JPanel buildNotificationBanner(String studentNum) {
+        checkAndEscalateWarnings();
+        long dueSoon = transactions.stream().filter(
+                t -> t.studentNum.equals(studentNum) && !t.returned && t.daysOverdue() >= -3 && t.daysOverdue() <= 0)
+                .count();
+        long overdue = transactions.stream()
+                .filter(t -> t.studentNum.equals(studentNum) && !t.returned && t.daysOverdue() > 0).count();
+
+        JPanel banner = new JPanel();
+        banner.setLayout(new BoxLayout(banner, BoxLayout.Y_AXIS));
+        banner.setOpaque(false);
+
+        if (overdue > 0) {
+            JPanel alert = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+            alert.setBackground(new Color(255, 200, 200));
+            alert.setBorder(new LineBorder(RED, 1, true));
+            double totalFine = transactions.stream()
+                    .filter(t -> t.studentNum.equals(studentNum) && !t.returned && t.daysOverdue() > 0)
+                    .mapToDouble(Transaction::computeOverdueFine).sum();
+            alert.add(new JLabel("🔴  " + overdue + " book(s) OVERDUE! Accumulated fine: ₱" +
+                    String.format("%.2f", totalFine) + " — Please return immediately!") {
+                {
+                    setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    setForeground(new Color(150, 20, 20));
+                }
+            });
+            banner.add(alert);
+        }
+        if (dueSoon > 0) {
+            JPanel alert = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+            alert.setBackground(new Color(255, 252, 195));
+            alert.setBorder(new LineBorder(GOLD, 1, true));
+            alert.add(new JLabel("🟡  " + dueSoon + " book(s) due within 3 days — Please return soon!") {
+                {
+                    setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    setForeground(new Color(130, 90, 0));
+                }
+            });
+            banner.add(alert);
+        }
+        return banner;
+    }
+
+    JPanel buildAdminNotificationBanner() {
+        checkAndEscalateWarnings();
+        long overdue = transactions.stream().filter(t -> !t.returned && t.daysOverdue() > 0).count();
+        long dueSoon = transactions.stream().filter(t -> !t.returned && t.daysOverdue() >= -3 && t.daysOverdue() <= 0)
+                .count();
+        long critical = transactions.stream().filter(t -> !t.returned && t.daysOverdue() > WARN3_DAYS).count();
+
+        JPanel banner = new JPanel();
+        banner.setLayout(new BoxLayout(banner, BoxLayout.Y_AXIS));
+        banner.setOpaque(false);
+        banner.setBorder(new EmptyBorder(0, 0, 8, 0));
+
+        if (critical > 0) {
+            JPanel a = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+            a.setBackground(new Color(80, 0, 0));
+            a.setBorder(new LineBorder(RED, 1, true));
+            a.add(new JLabel("⚫  " + critical
+                    + " transaction(s) CRITICAL (30+ days overdue) — Requires immediate admin action!") {
+                {
+                    setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    setForeground(new Color(255, 180, 180));
+                }
+            });
+            banner.add(a);
+        }
+        if (overdue > 0) {
+            JPanel a = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+            a.setBackground(new Color(255, 200, 200));
+            a.setBorder(new LineBorder(RED, 1, true));
+            a.add(new JLabel("🔴  " + overdue + " book(s) currently OVERDUE across all students.") {
+                {
+                    setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    setForeground(new Color(140, 20, 20));
+                }
+            });
+            banner.add(a);
+        }
+        if (dueSoon > 0) {
+            JPanel a = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 5));
+            a.setBackground(new Color(255, 252, 195));
+            a.setBorder(new LineBorder(GOLD, 1, true));
+            a.add(new JLabel("🟡  " + dueSoon + " book(s) due within 3 days.") {
+                {
+                    setFont(new Font("Segoe UI", Font.BOLD, 12));
+                    setForeground(new Color(130, 90, 0));
+                }
+            });
+            banner.add(a);
+        }
+        return banner;
+    }
+
+    // ── UI HELPERS ────────────────────────────────
+    JButton menuBtn(String t, Color bg) {
+        JButton b = new JButton(t);
+        b.setFont(new Font("Segoe UI", Font.BOLD, 17));
+        b.setBackground(bg);
+        b.setForeground(WHITE);
+        b.setFocusPainted(false);
+        b.setBorder(new EmptyBorder(14, 28, 14, 28));
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        b.setOpaque(true);
+        b.setContentAreaFilled(true);
+        b.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) {
+                b.setBackground(bg.darker());
+            }
+
+            public void mouseExited(MouseEvent e) {
+                b.setBackground(bg);
+            }
+        });
+        return b;
+    }
+
+    JButton smallBtn(String t, Color bg) {
+        JButton b = new JButton(t);
+        b.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        b.setBackground(bg);
+        b.setForeground(WHITE);
+        b.setFocusPainted(false);
+        b.setBorder(new EmptyBorder(7, 16, 7, 16));
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        b.setOpaque(true);
+        b.setContentAreaFilled(true);
+        return b;
+    }
+
+    JButton sidebarBtn(String t) {
+        JButton b = new JButton(t);
+        b.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        b.setForeground(new Color(185, 210, 245));
+        b.setBackground(SIDEBAR);
+        b.setBorder(new EmptyBorder(11, 20, 11, 0));
+        b.setHorizontalAlignment(SwingConstants.LEFT);
+        b.setFocusPainted(false);
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        b.setOpaque(true);
+        b.setContentAreaFilled(true);
+        b.setMaximumSize(new Dimension(215, 44));
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) {
+                b.setBackground(new Color(30, 52, 105));
+            }
+
+            public void mouseExited(MouseEvent e) {
+                b.setBackground(SIDEBAR);
+            }
+        });
+        return b;
+    }
+
+    JTable styledTable(DefaultTableModel m) {
+        JTable t = new JTable(m) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+
+            @Override
+            public Component prepareRenderer(TableCellRenderer renderer, int row, int col) {
+                Component c = super.prepareRenderer(renderer, row, col);
+                if (isRowSelected(row)) {
+                    c.setBackground(new Color(190, 215, 255));
+                    c.setForeground(Color.BLACK);
+                } else {
+                    c.setBackground(row % 2 == 0 ? WHITE : new Color(248, 250, 253));
+                    c.setForeground(Color.BLACK);
+                }
+                return c;
+            }
+        };
+        styleTableBase(t);
+        return t;
+    }
+
+    // Color-coded transaction table
+    JTable styledTransTable(DefaultTableModel m) {
+        JTable t = new JTable(m) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+
+            @Override
+            public Component prepareRenderer(TableCellRenderer renderer, int row, int col) {
+                Component c = super.prepareRenderer(renderer, row, col);
+                if (isRowSelected(row)) {
+                    c.setBackground(new Color(190, 215, 255));
+                    c.setForeground(Color.BLACK);
+                } else {
+                    // Map model row to transaction
+                    int mr = convertRowIndexToModel(row);
+                    Color bg = WHITE;
+                    if (mr >= 0 && mr < transactions.size()) {
+                        bg = transactions.get(mr).rowColor();
+                    }
+                    c.setBackground(bg);
+                    c.setForeground(Color.BLACK);
+                }
+                return c;
+            }
+        };
+        styleTableBase(t);
+        return t;
+    }
+
+    void styleTableBase(JTable t) {
+        t.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        t.setRowHeight(28);
+        t.setGridColor(new Color(220, 225, 235));
+        t.setBackground(WHITE);
+        t.setSelectionBackground(new Color(210, 230, 255));
+        t.setSelectionForeground(Color.BLACK);
+        t.setShowVerticalLines(false);
+        t.setIntercellSpacing(new Dimension(0, 1));
+        t.setFillsViewportHeight(true);
+        JTableHeader h = t.getTableHeader();
+        h.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        h.setBackground(NAVY);
+        h.setForeground(WHITE);
+        h.setOpaque(true);
+        h.setPreferredSize(new Dimension(0, 34));
+        h.setReorderingAllowed(false);
+        h.setDefaultRenderer(new DefaultTableCellRenderer() {
+            {
+                setHorizontalAlignment(SwingConstants.LEFT);
+                setOpaque(true);
+            }
+
+            public Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean foc, int row,
+                    int col) {
+                super.getTableCellRendererComponent(tb, v, sel, foc, row, col);
+                setBackground(NAVY);
+                setForeground(WHITE);
+                setFont(new Font("Segoe UI", Font.BOLD, 13));
+                setBorder(new EmptyBorder(0, 8, 0, 8));
+                return this;
+            }
+        });
+        t.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            {
+                setOpaque(true);
+            }
+
+            public Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean foc, int row,
+                    int col) {
+                super.getTableCellRendererComponent(tb, v, sel, foc, row, col);
+                if (sel) {
+                    setBackground(new Color(210, 230, 255));
+                    setForeground(Color.BLACK);
+                } else {
+                    setBackground(tb.getBackground());
+                    setForeground(Color.BLACK);
+                }
+                setBorder(new EmptyBorder(0, 8, 0, 8));
+                return this;
+            }
+        });
+    }
+
+    JScrollPane scrollTable(JTable t) {
+        JScrollPane s = new JScrollPane(t);
+        s.setBorder(new LineBorder(new Color(210, 215, 225), 1));
+        s.getViewport().setBackground(WHITE);
+        s.setCorner(JScrollPane.UPPER_RIGHT_CORNER, new JPanel() {
+            {
+                setBackground(NAVY);
+            }
+        });
+        return s;
+    }
+
+    JLabel sectionTitle(String t) {
+        JLabel l = new JLabel(t);
+        l.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        l.setForeground(NAVY);
+        l.setBorder(new EmptyBorder(0, 0, 12, 0));
+        return l;
+    }
+
+    JPanel statCard(String label, String val, Color color) {
+        JPanel c = new JPanel(new GridBagLayout()) {
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(color);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 14, 14);
+            }
+        };
+        c.setOpaque(false);
+        c.setBorder(new EmptyBorder(18, 16, 18, 16));
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = 0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        JLabel lbl = new JLabel(label, SwingConstants.CENTER);
+        lbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        lbl.setForeground(new Color(210, 225, 255));
+        JLabel vl = new JLabel(val, SwingConstants.CENTER);
+        vl.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        vl.setForeground(WHITE);
+        g.gridy = 0;
+        c.add(lbl, g);
+        g.gridy = 1;
+        c.add(vl, g);
+        return c;
+    }
+
+    void applyFilter(DefaultTableModel m, JTable table, String cat, String q, int catCol, int... searchCols) {
+        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(m);
+        table.setRowSorter(sorter);
+        List<RowFilter<Object, Object>> fs = new ArrayList<>();
+        if (cat != null && !cat.equals("All Categories"))
+            fs.add(RowFilter.regexFilter("(?i)^" + java.util.regex.Pattern.quote(cat) + "$", catCol));
+        if (!q.isEmpty()) {
+            List<RowFilter<Object, Object>> subs = new ArrayList<>();
+            for (int c : searchCols)
+                subs.add(RowFilter.regexFilter("(?i)" + q, c));
+            fs.add(RowFilter.orFilter(subs));
+        }
+        sorter.setRowFilter(fs.isEmpty() ? null : RowFilter.andFilter(fs));
+    }
+
+    // ── HOME PAGE ─────────────────────────────────
+    JPanel homePage() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(LIGHT);
+        JPanel box = new JPanel(new GridBagLayout());
+        box.setBackground(WHITE);
+        box.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(200, 210, 230), 1, true), new EmptyBorder(40, 60, 40, 60)));
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = 0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        g.insets = new Insets(6, 0, 6, 0);
+        JLabel title = new JLabel("BookFlow — Library Management System", SwingConstants.CENTER);
+        title.setFont(new Font("Segoe UI", Font.BOLD, 28));
+        title.setForeground(NAVY);
+        JLabel sub = new JLabel("Rizal Technological University — RTU Mandaluyong", SwingConstants.CENTER);
+        sub.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        sub.setForeground(new Color(120, 130, 150));
+        JButton a = menuBtn("  Admin / Library Staff", NAVY);
+        JButton s = menuBtn("  Student Portal", BLUE);
+        JButton bk = menuBtn("  Browse Books (Guest)", GREEN);
+        a.addActionListener(e -> card.show(mainPanel, "ADMIN"));
+        s.addActionListener(e -> card.show(mainPanel, "STUDENT"));
+        bk.addActionListener(e -> card.show(mainPanel, "BOOKS"));
+        JLabel hint = new JLabel("Default Admin Login: admin / admin123", SwingConstants.CENTER);
+        hint.setFont(new Font("Segoe UI", Font.ITALIC, 11));
+        hint.setForeground(new Color(160, 170, 185));
+        int row = 0;
+        for (Component c : new Component[] { title, sub, a, s, bk, hint }) {
+            g.gridy = row++;
+            box.add(c, g);
+        }
+        panel.add(box);
+        return panel;
+    }
+
+    // ── ADMIN CHOICE ──────────────────────────────
+    JPanel adminChoice() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(LIGHT);
+        JPanel box = new JPanel(new GridBagLayout());
+        box.setBackground(WHITE);
+        box.setBorder(new EmptyBorder(40, 60, 40, 60));
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = 0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        g.insets = new Insets(8, 0, 8, 0);
+        JLabel t = new JLabel("Admin / Library Staff", SwingConstants.CENTER);
+        t.setFont(new Font("Segoe UI", Font.BOLD, 26));
+        t.setForeground(NAVY);
+        JButton l = menuBtn("  Log In", NAVY);
+        JButton c = menuBtn("  Create Admin Account", BLUE);
+        JButton b = menuBtn("Back", new Color(130, 140, 155));
+        l.addActionListener(e -> adminLogin());
+        c.addActionListener(e -> createAdmin());
+        b.addActionListener(e -> card.show(mainPanel, "HOME"));
+        int row = 0;
+        for (Component comp : new Component[] { t, l, c, b }) {
+            g.gridy = row++;
+            box.add(comp, g);
+        }
+        panel.add(box);
+        return panel;
+    }
+
+    // ── STUDENT MENU ──────────────────────────────
+    JPanel studentMenu() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(LIGHT);
+        JPanel box = new JPanel(new GridBagLayout());
+        box.setBackground(WHITE);
+        box.setBorder(new EmptyBorder(40, 60, 40, 60));
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridx = 0;
+        g.fill = GridBagConstraints.HORIZONTAL;
+        g.insets = new Insets(8, 0, 8, 0);
+        JLabel t = new JLabel("Student Portal", SwingConstants.CENTER);
+        t.setFont(new Font("Segoe UI", Font.BOLD, 26));
+        t.setForeground(NAVY);
+        JButton l = menuBtn("  Log In", BLUE);
+        JButton lo = menuBtn("  Log Out", GOLD);
+        JButton c = menuBtn("  Create Student Account", GREEN);
+        JButton b = menuBtn("Back", new Color(130, 140, 155));
+        l.addActionListener(e -> studentLogin());
+        lo.addActionListener(e -> studentLogout());
+        c.addActionListener(e -> createStudent());
+        b.addActionListener(e -> card.show(mainPanel, "HOME"));
+        int row = 0;
+        for (Component comp : new Component[] { t, l, lo, c, b }) {
+            g.gridy = row++;
+            box.add(comp, g);
+        }
+        panel.add(box);
+        return panel;
+    }
+
+    // ── ACCOUNT CREATION ──────────────────────────
+    void createStudent() {
+        JTextField name = new JTextField(), num = new JTextField(),
+                email = new JTextField(), prog = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        if (JOptionPane.showConfirmDialog(this, new Object[] {
+                "Full Name:", name, "Student Number:", num,
+                "Institutional Email:", email, "Program:", prog, "Password:", pass },
+                "Create Student Account", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        if (name.getText().trim().isEmpty() || num.getText().trim().isEmpty() ||
+                email.getText().trim().isEmpty() || prog.getText().trim().isEmpty() || pass.getPassword().length == 0) {
+            JOptionPane.showMessageDialog(this, "All fields are required!", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        for (Student s : students) {
+            if (s.number.equals(num.getText().trim())) {
+                JOptionPane.showMessageDialog(this, "Student number already exists!", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+        Student s = new Student(name.getText().trim(), num.getText().trim(),
+                email.getText().trim(), prog.getText().trim(), new String(pass.getPassword()));
+        students.add(s);
+        saveStudents();
+        studentModel.addRow(new Object[] { s.name, s.number, s.program, s.email, s.warningLabel() });
+        JOptionPane.showMessageDialog(this, "Account created!\nStudent No: " + s.number);
+    }
+
+    void createAdmin() {
+        JTextField name = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        JTextField email = new JTextField(), contact = new JTextField();
+        if (JOptionPane.showConfirmDialog(this, new Object[] {
+                "Name:", name, "Password:", pass, "Email:", email, "Contact:", contact },
+                "Create Admin", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        if (name.getText().trim().isEmpty() || pass.getPassword().length == 0 ||
+                email.getText().trim().isEmpty() || contact.getText().trim().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "All fields required.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        admins.add(new Admin(name.getText().trim(), new String(pass.getPassword()),
+                email.getText().trim(), contact.getText().trim()));
+        saveAdmins();
+        JOptionPane.showMessageDialog(this, "Admin account created!");
+    }
+
+    // ── STUDENT LOGIN/LOGOUT ──────────────────────
+    void studentLogin() {
+        JTextField num = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        if (JOptionPane.showConfirmDialog(this, new Object[] {
+                "Student Number:", num, "Password:", pass },
+                "Student Log In", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        for (Student s : students) {
+            if (s.number.equals(num.getText().trim()) && s.password.equals(new String(pass.getPassword()))) {
+                if (s.timeIn != null) {
+                    JOptionPane.showMessageDialog(this, "Already logged in!", "Notice",
+                            JOptionPane.INFORMATION_MESSAGE);
+                    return;
+                }
+                s.timeIn = LocalDateTime.now();
+                openStudentDashboard(s);
+                return;
+            }
+        }
+        JOptionPane.showMessageDialog(this, "Invalid student number or password.", "Login Failed",
+                JOptionPane.ERROR_MESSAGE);
+    }
+
+    void studentLogout() {
+        JTextField num = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        if (JOptionPane.showConfirmDialog(this, new Object[] {
+                "Student Number:", num, "Password:", pass },
+                "Student Log Out", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        for (Student s : students) {
+            if (s.number.equals(num.getText().trim()) && s.password.equals(new String(pass.getPassword()))) {
+                if (s.timeIn == null) {
+                    JOptionPane.showMessageDialog(this, "Not logged in.", "Notice", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                LocalDateTime out = LocalDateTime.now();
+                String date = dateFmt.format(LocalDate.now()),
+                        ti = timeFmt.format(s.timeIn),
+                        to = timeFmt.format(out);
+                history.add(new HistoryEntry(s.name, s.program, date, ti, to));
+                historyModel.addRow(new Object[] { s.name, s.program, date, ti, to });
+                saveHistory();
+                s.timeIn = null;
+                JOptionPane.showMessageDialog(this,
+                        "Logged out!\n" + s.name + "\n" + date + " | In: " + ti + " | Out: " + to);
+                return;
+            }
+        }
+        JOptionPane.showMessageDialog(this, "Invalid credentials.", "Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    // ── STUDENT DASHBOARD ─────────────────────────
+    void openStudentDashboard(Student s) {
+        checkAndEscalateWarnings();
+        JFrame dash = new JFrame("Student Dashboard — " + s.name);
+        dash.setSize(1100, 700);
+        dash.setMinimumSize(new Dimension(900, 580));
+        dash.setLocationRelativeTo(null);
+        dash.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        JPanel sidebar = new JPanel();
+        sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
+        sidebar.setBackground(SIDEBAR);
+        sidebar.setPreferredSize(new Dimension(215, 0));
+
+        JLabel logo = new JLabel("  BookFlow", SwingConstants.LEFT);
+        logo.setFont(new Font("Segoe UI", Font.BOLD, 17));
+        logo.setForeground(WHITE);
+        logo.setBorder(new EmptyBorder(22, 14, 8, 0));
+        logo.setMaximumSize(new Dimension(215, 50));
+        sidebar.add(logo);
+        JLabel uname = new JLabel("  " + s.name);
+        uname.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        uname.setForeground(new Color(180, 200, 240));
+        uname.setBorder(new EmptyBorder(0, 14, 2, 0));
+        uname.setMaximumSize(new Dimension(215, 24));
+        sidebar.add(uname);
+        JLabel uinfo = new JLabel("  " + s.number + " | " + s.program);
+        uinfo.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        uinfo.setForeground(new Color(130, 155, 205));
+        uinfo.setBorder(new EmptyBorder(0, 14, 2, 0));
+        uinfo.setMaximumSize(new Dimension(215, 22));
+        sidebar.add(uinfo);
+        // Warning level label in sidebar
+        Color warnColor = s.warningCount == 0 ? new Color(80, 200, 120)
+                : s.warningCount >= 3 ? new Color(255, 100, 100) : new Color(255, 200, 80);
+        JLabel warnLbl = new JLabel("  ⚠ " + s.warningLabel());
+        warnLbl.setFont(new Font("Segoe UI", Font.BOLD, 10));
+        warnLbl.setForeground(warnColor);
+        warnLbl.setBorder(new EmptyBorder(0, 14, 16, 0));
+        warnLbl.setMaximumSize(new Dimension(215, 22));
+        sidebar.add(warnLbl);
+
+        CardLayout sdCard = new CardLayout();
+        JPanel sdContent = new JPanel(sdCard);
+        sdContent.setBackground(LIGHT);
+
+        String[][] nav = { { " Overview", "OV" }, { " My Borrowed Books", "BR" },
+                { " My Penalties", "PEN" }, { " Browse & Borrow Books", "BROW" } };
+        for (String[] n : nav) {
+            JButton btn = sidebarBtn(n[0]);
+            final String sc = n[1];
+            btn.addActionListener(e -> sdCard.show(sdContent, sc));
+            sidebar.add(btn);
+        }
+        sidebar.add(Box.createVerticalGlue());
+        JButton logoutBtn = new JButton("  Log Out");
+        logoutBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        logoutBtn.setForeground(new Color(255, 150, 150));
+        logoutBtn.setBackground(SIDEBAR);
+        logoutBtn.setBorder(new EmptyBorder(12, 20, 12, 0));
+        logoutBtn.setHorizontalAlignment(SwingConstants.LEFT);
+        logoutBtn.setFocusPainted(false);
+        logoutBtn.setOpaque(true);
+        logoutBtn.setContentAreaFilled(true);
+        logoutBtn.setMaximumSize(new Dimension(215, 44));
+        logoutBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+        logoutBtn.addActionListener(e -> {
+            if (s.timeIn != null) {
+                LocalDateTime out = LocalDateTime.now();
+                String date = dateFmt.format(LocalDate.now()),
+                        ti = timeFmt.format(s.timeIn), to = timeFmt.format(out);
+                history.add(new HistoryEntry(s.name, s.program, date, ti, to));
+                historyModel.addRow(new Object[] { s.name, s.program, date, ti, to });
+                saveHistory();
+                s.timeIn = null;
+            }
+            dash.dispose();
+            JOptionPane.showMessageDialog(null, "Logged out. Goodbye, " + s.name + "!");
+        });
+        sidebar.add(logoutBtn);
+        sidebar.add(Box.createRigidArea(new Dimension(0, 10)));
+
+        sdContent.add(buildStudentOverview(s), "OV");
+        sdContent.add(buildStudentBorrowed(s), "BR");
+        sdContent.add(buildStudentPenalties(s), "PEN");
+        sdContent.add(buildBrowseAndBorrow(s, dash), "BROW");
+
+        dash.setLayout(new BorderLayout());
+        dash.add(sidebar, BorderLayout.WEST);
+        dash.add(sdContent, BorderLayout.CENTER);
+        dash.setVisible(true);
+    }
+
+    JPanel buildStudentOverview(Student s) {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(20, 30, 20, 30));
+
+        JPanel topSection = new JPanel(new BorderLayout(0, 6));
+        topSection.setOpaque(false);
+        JLabel title = new JLabel("Welcome back, " + s.name + "!");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        title.setForeground(NAVY);
+        topSection.add(title, BorderLayout.NORTH);
+        topSection.add(buildNotificationBanner(s.number), BorderLayout.CENTER);
+        p.add(topSection, BorderLayout.NORTH);
+
+        JPanel cards = new JPanel(new GridLayout(1, 4, 14, 0));
+        cards.setOpaque(false);
+        long borrowed = transactions.stream().filter(t -> t.studentNum.equals(s.number) && !t.returned).count();
+        long pending = penalties.stream().filter(pen -> pen.studentNum.equals(s.number) && !pen.settled).count();
+        double fines = penalties.stream().filter(pen -> pen.studentNum.equals(s.number) && !pen.settled)
+                .mapToDouble(pen -> pen.amount).sum();
+        double overdueFine = transactions.stream()
+                .filter(t -> t.studentNum.equals(s.number) && !t.returned && t.daysOverdue() > 0)
+                .mapToDouble(Transaction::computeOverdueFine).sum();
+
+        cards.add(statCard("Active Borrows", String.valueOf(borrowed), NAVY));
+        cards.add(statCard("Pending Penalties", String.valueOf(pending), pending > 0 ? RED : GREEN));
+        cards.add(statCard("Settled Fines", String.format("₱%.2f", fines), fines > 0 ? RED : GREEN));
+        cards.add(statCard("Overdue Fine", String.format("₱%.2f", overdueFine), overdueFine > 0 ? ORANGE : GREEN));
+        p.add(cards, BorderLayout.CENTER);
+
+        JPanel info = new JPanel(new GridLayout(0, 2, 10, 8));
+        info.setBackground(WHITE);
+        info.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(200, 210, 230), 1),
+                new EmptyBorder(18, 22, 18, 22)));
+        Color warnColor = s.warningCount == 0 ? GREEN : s.warningCount >= 3 ? RED : GOLD;
+        for (String[] row : new String[][] {
+                { "Student No:", s.number }, { "Full Name:", s.name },
+                { "Program:", s.program }, { "Email:", s.email },
+                { "Warning Level:", s.warningLabel() } }) {
+            JLabel k = new JLabel(row[0]);
+            k.setFont(new Font("Segoe UI", Font.BOLD, 13));
+            k.setForeground(new Color(90, 100, 120));
+            JLabel v = new JLabel(row[1]);
+            v.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            if (row[0].equals("Warning Level:"))
+                v.setForeground(warnColor);
+            info.add(k);
+            info.add(v);
+        }
+        p.add(info, BorderLayout.SOUTH);
+        return p;
+    }
+
+    JPanel buildStudentBorrowed(Student s) {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(24, 28, 24, 28));
+
+        JPanel north = new JPanel(new BorderLayout(0, 6));
+        north.setOpaque(false);
+        north.add(sectionTitle(" My Borrowed Books"), BorderLayout.NORTH);
+        north.add(buildNotificationBanner(s.number), BorderLayout.CENTER);
+
+        // Color legend
+        JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
+        legend.setOpaque(false);
+        legend.add(new JLabel("Color Key:") {
+            {
+                setFont(new Font("Segoe UI", Font.BOLD, 11));
+            }
+        });
+        for (Object[] leg : new Object[][] {
+                { ROW_GREEN, "Active" }, { ROW_YELLOW, "Due Soon (≤3d)" },
+                { ROW_ORANGE, "Due Today/Tomorrow" }, { ROW_RED, "Overdue" }, { ROW_GRAY, "Returned" } }) {
+            JLabel lbl = new JLabel("  " + leg[1] + "  ");
+            lbl.setBackground((Color) leg[0]);
+            lbl.setOpaque(true);
+            lbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            lbl.setBorder(new LineBorder(Color.LIGHT_GRAY, 1));
+            legend.add(lbl);
+        }
+        north.add(legend, BorderLayout.SOUTH);
+        p.add(north, BorderLayout.NORTH);
+
+        DefaultTableModel m = new DefaultTableModel(
+                new String[] { "Book No", "Book Name", "Author", "Borrow Date", "Expected Return", "Returned",
+                        "Status" },
+                0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        // Only add this student's transactions — color-coding uses transModel index so
+        // build local
+        List<Transaction> myTrans = transactions.stream().filter(t -> t.studentNum.equals(s.number))
+                .collect(Collectors.toList());
+        for (Transaction t : myTrans)
+            m.addRow(new Object[] { t.bookNo, t.bookName, t.author, t.borrowDate, t.expectedReturn,
+                    t.returnedDate.isEmpty() ? "—" : t.returnedDate, t.statusLabel() });
+
+        JTable table = new JTable(m) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+
+            @Override
+            public Component prepareRenderer(TableCellRenderer renderer, int row, int col) {
+                Component c = super.prepareRenderer(renderer, row, col);
+                if (isRowSelected(row)) {
+                    c.setBackground(new Color(190, 215, 255));
+                    c.setForeground(Color.BLACK);
+                } else {
+                    int mr = convertRowIndexToModel(row);
+                    c.setBackground(mr < myTrans.size() ? myTrans.get(mr).rowColor() : WHITE);
+                    c.setForeground(Color.BLACK);
+                }
+                return c;
+            }
+        };
+        styleTableBase(table);
+        p.add(scrollTable(table), BorderLayout.CENTER);
+        return p;
+    }
+
+    JPanel buildStudentPenalties(Student s) {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(24, 28, 24, 28));
+        JLabel title = new JLabel(" My Penalties & Fines");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        title.setForeground(RED);
+        title.setBorder(new EmptyBorder(0, 0, 12, 0));
+        p.add(title, BorderLayout.NORTH);
+
+        DefaultTableModel m = new DefaultTableModel(
+                new String[] { "Book", "Reason", "Amount", "Date", "Status" }, 0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        double total = 0, overdueFine = 0;
+        for (Penalty pen : penalties) {
+            if (pen.studentNum.equals(s.number)) {
+                m.addRow(new Object[] { pen.bookName, pen.reason,
+                        String.format("₱%.2f", pen.amount), pen.date, pen.settled ? "Settled" : "Pending" });
+                if (!pen.settled)
+                    total += pen.amount;
+            }
+        }
+        overdueFine = transactions.stream()
+                .filter(t -> t.studentNum.equals(s.number) && !t.returned && t.daysOverdue() > 0)
+                .mapToDouble(Transaction::computeOverdueFine).sum();
+
+        p.add(scrollTable(styledTable(m)), BorderLayout.CENTER);
+
+        JPanel south = new JPanel(new GridLayout(3, 1, 0, 2));
+        south.setOpaque(false);
+        JLabel tot = new JLabel(" Settled Penalties Total: ₱" + String.format("%.2f", total));
+        tot.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        tot.setForeground(total > 0 ? RED : GREEN);
+        JLabel odl = new JLabel(" Accumulated Overdue Fine: ₱" + String.format("%.2f", overdueFine)
+                + " (auto-computed, not yet recorded)");
+        odl.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        odl.setForeground(overdueFine > 0 ? ORANGE : GREEN);
+        JLabel warn = new JLabel(" Warning Level: " + s.warningLabel());
+        warn.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        warn.setForeground(s.warningCount == 0 ? GREEN : s.warningCount >= 3 ? RED : GOLD);
+        south.add(tot);
+        south.add(odl);
+        south.add(warn);
+        p.add(south, BorderLayout.SOUTH);
+        return p;
+    }
+
+    // ── BROWSE & BORROW ───────────────────────────
+    JPanel buildBrowseAndBorrow(Student s, JFrame parentDash) {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(20, 26, 20, 26));
+
+        JLabel hdr = sectionTitle(" Browse & Borrow Books");
+        JLabel instrLabel = new JLabel(" Select a book from the table below, then click \"Borrow Selected Book\"");
+        instrLabel.setFont(new Font("Segoe UI", Font.ITALIC, 12));
+        instrLabel.setForeground(new Color(100, 110, 130));
+        instrLabel.setBorder(new EmptyBorder(0, 0, 8, 0));
+
+        JComboBox<String> catBox = new JComboBox<>(CATEGORIES);
+        catBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        JTextField searchTf = new JTextField();
+        searchTf.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        searchTf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+
+        JPanel catPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        catPanel.setOpaque(false);
+        catPanel.add(new JLabel(" Category: "));
+        catPanel.add(catBox);
+        JPanel srPanel = new JPanel(new BorderLayout(4, 0));
+        srPanel.setOpaque(false);
+        srPanel.add(new JLabel(" Search: "), BorderLayout.WEST);
+        srPanel.add(searchTf, BorderLayout.CENTER);
+        JPanel filterRow = new JPanel(new BorderLayout(10, 0));
+        filterRow.setOpaque(false);
+        filterRow.setBorder(new EmptyBorder(0, 0, 8, 0));
+        filterRow.add(catPanel, BorderLayout.WEST);
+        filterRow.add(srPanel, BorderLayout.CENTER);
+
+        JPanel north = new JPanel(new BorderLayout(0, 2));
+        north.setOpaque(false);
+        north.add(hdr, BorderLayout.NORTH);
+        north.add(instrLabel, BorderLayout.CENTER);
+        north.add(filterRow, BorderLayout.SOUTH);
+        p.add(north, BorderLayout.NORTH);
+
+        DefaultTableModel browseModel = new DefaultTableModel(
+                new String[] { "Book No", "Book Name", "Author", "Category", "Stock", "Price", "Status" }, 0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        for (int i = 0; i < bookModel.getRowCount(); i++)
+            browseModel.addRow(new Object[] {
+                    bookModel.getValueAt(i, 0), bookModel.getValueAt(i, 1), bookModel.getValueAt(i, 2),
+                    bookModel.getValueAt(i, 3), bookModel.getValueAt(i, 4), bookModel.getValueAt(i, 5),
+                    bookModel.getValueAt(i, 6) });
+
+        JTable browseTable = new JTable(browseModel) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+
+            @Override
+            public Component prepareRenderer(TableCellRenderer renderer, int row, int col) {
+                Component c = super.prepareRenderer(renderer, row, col);
+                if (!isRowSelected(row)) {
+                    String st = null;
+                    try {
+                        st = (String) getValueAt(row, 6);
+                    } catch (Exception ignored) {
+                    }
+                    c.setBackground(row % 2 == 0 ? WHITE : new Color(248, 250, 253));
+                    if ("Available".equals(st))
+                        c.setForeground(new Color(30, 140, 60));
+                    else if ("Not Available".equals(st))
+                        c.setForeground(new Color(180, 50, 40));
+                    else if ("Damaged".equals(st))
+                        c.setForeground(new Color(160, 80, 0));
+                    else
+                        c.setForeground(Color.BLACK);
+                } else {
+                    c.setBackground(new Color(210, 230, 255));
+                    c.setForeground(Color.BLACK);
+                }
+                return c;
+            }
+        };
+        styleTableBase(browseTable);
+        browseTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(browseModel);
+        browseTable.setRowSorter(sorter);
+        Runnable filter = () -> applyFilter(browseModel, browseTable, (String) catBox.getSelectedItem(),
+                searchTf.getText().trim(), 3, 0, 1, 2, 3);
+        catBox.addActionListener(e -> filter.run());
+        searchTf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                filter.run();
+            }
+        });
+        p.add(scrollTable(browseTable), BorderLayout.CENTER);
+
+        JButton borrowBtn = new JButton(" Borrow Selected Book");
+        borrowBtn.setFont(new Font("Segoe UI", Font.BOLD, 15));
+        borrowBtn.setBackground(BLUE);
+        borrowBtn.setForeground(WHITE);
+        borrowBtn.setFocusPainted(false);
+        borrowBtn.setBorder(new EmptyBorder(12, 24, 12, 24));
+        borrowBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        borrowBtn.setOpaque(true);
+        borrowBtn.setContentAreaFilled(true);
+
+        borrowBtn.addActionListener(e -> {
+            int row = browseTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(parentDash, "Please select a book first!", "No Selection",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            int mr = browseTable.convertRowIndexToModel(row);
+            String bNo = (String) browseModel.getValueAt(mr, 0);
+            String bName = (String) browseModel.getValueAt(mr, 1);
+            String status = (String) browseModel.getValueAt(mr, 6);
+            if ("Not Available".equals(status)) {
+                JOptionPane.showMessageDialog(parentDash, "This book has 0 stock.", "Not Available",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if ("Damaged".equals(status)) {
+                JOptionPane.showMessageDialog(parentDash, "This book is Damaged and cannot be borrowed.", "Damaged",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (hasPendingPenalty(s.number)) {
+                JOptionPane.showMessageDialog(parentDash,
+                        "You have unsettled penalties!\nPlease settle all fines before borrowing.", "Blocked",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (isCriticalBlocked(s.number)) {
+                JOptionPane.showMessageDialog(parentDash,
+                        "Your account is CRITICALLY BLOCKED due to severe overdue offenses.\nPlease visit the library admin to resolve.",
+                        "Blocked", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            JTextField expDate = new JTextField(LocalDate.now().plusDays(7).toString());
+            if (JOptionPane.showConfirmDialog(parentDash, new Object[] {
+                    "Confirm borrow: " + bName, "Expected Return Date (YYYY-MM-DD):", expDate },
+                    "Confirm Borrow", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+                return;
+
+            Book bk = findBook(bNo);
+            if (bk == null || bk.stock <= 0) {
+                JOptionPane.showMessageDialog(parentDash, "Book no longer available.", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            bk.stock--;
+            browseModel.setValueAt(bk.stock, mr, 4);
+            browseModel.setValueAt(bk.status(), mr, 6);
+            int sr = bookModelRow(bNo);
+            if (sr >= 0) {
+                bookModel.setValueAt(bk.stock, sr, 4);
+                bookModel.setValueAt(bk.status(), sr, 6);
+            }
+            saveBooks();
+
+            Transaction t = new Transaction();
+            t.student = s.name;
+            t.studentNum = s.number;
+            t.bookNo = bk.no;
+            t.bookName = bk.name;
+            t.author = bk.author;
+            t.borrowDate = LocalDate.now().toString();
+            t.expectedReturn = expDate.getText().trim();
+            transactions.add(t);
+            transModel.addRow(new Object[] { s.name, s.number, bk.no, bk.name,
+                    t.borrowDate, t.expectedReturn, "—", t.statusLabel() });
+            saveTransactions();
+            JOptionPane.showMessageDialog(parentDash,
+                    "Borrow Successful!\n\nBook: " + bk.name +
+                            "\nExpected Return: " + t.expectedReturn +
+                            "\n\nReminder:\n• Return on time to avoid fines.\n• Fine: ₱5/day (Days 1-14), ₱10/day (Days 15-30)\n• Reporting damage/loss before due date avoids overdue stacking.");
+        });
+
+        JPanel botPanel = new JPanel(new BorderLayout(12, 0));
+        botPanel.setOpaque(false);
+        botPanel.setBorder(new EmptyBorder(10, 0, 0, 0));
+        JLabel hint = new JLabel(" Select a row above, then click the button to borrow.");
+        hint.setFont(new Font("Segoe UI", Font.ITALIC, 12));
+        hint.setForeground(new Color(100, 110, 130));
+        botPanel.add(hint, BorderLayout.CENTER);
+        botPanel.add(borrowBtn, BorderLayout.EAST);
+        p.add(botPanel, BorderLayout.SOUTH);
+        return p;
+    }
+
+    // ── ADMIN LOGIN ───────────────────────────────
+    void adminLogin() {
+        JTextField name = new JTextField();
+        JPasswordField pass = new JPasswordField();
+        if (JOptionPane.showConfirmDialog(this, new Object[] { "Admin Name:", name, "Password:", pass },
+                "Admin Login", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        for (Admin a : admins) {
+            if (a.name.equals(name.getText().trim()) && a.password.equals(new String(pass.getPassword()))) {
+                openAdminDashboard();
+                return;
+            }
+        }
+        JOptionPane.showMessageDialog(this, "Invalid admin credentials.", "Login Failed", JOptionPane.ERROR_MESSAGE);
+    }
+
+    // ── ADMIN DASHBOARD ───────────────────────────
+    void openAdminDashboard() {
+        checkAndEscalateWarnings();
+        refreshTransactionStatuses();
+        JFrame dash = new JFrame("Admin Dashboard — BookFlow | RTU Library");
+        dash.setSize(1150, 730);
+        dash.setMinimumSize(new Dimension(960, 640));
+        dash.setLocationRelativeTo(null);
+        dash.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        tabs.addTab(" History", buildHistoryTab());
+        tabs.addTab(" Books", buildBooksTab());
+        tabs.addTab(" Students", buildStudentsTab());
+        tabs.addTab(" Transactions", buildTransactionTab());
+        tabs.addTab(" Penalties", buildPenaltyTab());
+        tabs.addTab(" Student Search", buildStudentSearchTab());
+
+        JPanel bot = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        bot.setBackground(new Color(240, 242, 248));
+        JButton logout = smallBtn(" Log Out", RED);
+        logout.addActionListener(e -> dash.dispose());
+        bot.add(logout);
+
+        dash.setLayout(new BorderLayout());
+        dash.add(tabs, BorderLayout.CENTER);
+        dash.add(bot, BorderLayout.SOUTH);
+        dash.setVisible(true);
+    }
+
+    JPanel buildHistoryTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(new EmptyBorder(12, 14, 12, 14));
+        p.setBackground(LIGHT);
+        JTable t = styledTable(historyModel);
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                applyFilter(historyModel, t, null, tf.getText().trim(), 0, 0, 1, 2);
+            }
+        });
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 8, 0));
+        top.add(new JLabel(" Search: "), BorderLayout.WEST);
+        top.add(tf, BorderLayout.CENTER);
+        p.add(top, BorderLayout.NORTH);
+        p.add(scrollTable(t), BorderLayout.CENTER);
+        return p;
+    }
+
+    JPanel buildBooksTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(new EmptyBorder(12, 14, 12, 14));
+        p.setBackground(LIGHT);
+        JTable table = styledTable(bookModel);
+        JComboBox<String> catBox = new JComboBox<>(CATEGORIES);
+        catBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        Runnable f = () -> applyFilter(bookModel, table, (String) catBox.getSelectedItem(), tf.getText().trim(), 3, 0,
+                1, 2, 3);
+        catBox.addActionListener(e -> f.run());
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                f.run();
+            }
+        });
+        JPanel catP = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        catP.setOpaque(false);
+        catP.add(new JLabel(" Category: "));
+        catP.add(catBox);
+        JPanel srP = new JPanel(new BorderLayout(4, 0));
+        srP.setOpaque(false);
+        srP.add(new JLabel(" Search: "), BorderLayout.WEST);
+        srP.add(tf, BorderLayout.CENTER);
+        JPanel top = new JPanel(new BorderLayout(8, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 8, 0));
+        top.add(catP, BorderLayout.WEST);
+        top.add(srP, BorderLayout.CENTER);
+        p.add(top, BorderLayout.NORTH);
+        p.add(scrollTable(table), BorderLayout.CENTER);
+
+        JPanel bot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        bot.setOpaque(false);
+        JButton add = smallBtn(" Add Book", BLUE);
+        JButton es = smallBtn(" Edit Stock/Price", GREEN);
+        JButton dmg = smallBtn(" Mark Damaged", RED);
+
+        add.addActionListener(e -> addBook());
+
+        es.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(null, "Select a book row first.");
+                return;
+            }
+            int mr = table.convertRowIndexToModel(row);
+            Book bk = books.get(mr);
+            JTextField stField = new JTextField(String.valueOf(bk.stock));
+            JTextField prField = new JTextField(String.valueOf(bk.price));
+            if (JOptionPane.showConfirmDialog(null, new Object[] {
+                    "New stock for \"" + bk.name + "\":", stField, "New price (₱):", prField },
+                    "Edit Stock & Price", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+                return;
+            try {
+                int ns = Integer.parseInt(stField.getText().trim());
+                double np = Double.parseDouble(prField.getText().trim());
+                if (ns < 0 || np < 0)
+                    throw new NumberFormatException();
+                bk.stock = ns;
+                bk.price = np;
+                bookModel.setValueAt(bk.stock, mr, 4);
+                bookModel.setValueAt(String.format("₱%.2f", bk.price), mr, 5);
+                bookModel.setValueAt(bk.status(), mr, 6);
+                saveBooks();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(null, "Enter valid non-negative numbers.", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        dmg.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(null, "Select a book row first.");
+                return;
+            }
+            int mr = table.convertRowIndexToModel(row);
+            Book bk = books.get(mr);
+            if (bk.damaged) {
+                JOptionPane.showMessageDialog(null, "Already marked Damaged.");
+                return;
+            }
+            JTextField sNum = new JTextField();
+            JOptionPane.showConfirmDialog(null,
+                    new Object[] { "Student Number responsible (leave blank if unknown):", sNum }, "Mark Damaged",
+                    JOptionPane.OK_CANCEL_OPTION);
+            bk.damaged = true;
+            bookModel.setValueAt("Damaged", mr, 6);
+            saveBooks();
+            String sn = sNum.getText().trim();
+            if (!sn.isEmpty()) {
+                Student st = findStudent(sn);
+                String sName = st != null ? st.name : sn;
+                // Check if overdue — stack fines
+                double overdueFine = 0;
+                Transaction activeTrans = transactions.stream()
+                        .filter(t -> t.bookNo.equals(bk.no) && t.studentNum.equals(sn) && !t.returned)
+                        .findFirst().orElse(null);
+                if (activeTrans != null && activeTrans.daysOverdue() > 0) {
+                    overdueFine = activeTrans.computeOverdueFine();
+                }
+                double totalFine = bk.price + overdueFine; // replacement cost + any overdue stacking
+                Penalty pen = new Penalty(sName, sn, bk.name, "Book Damaged", totalFine);
+                penalties.add(pen);
+                penaltyModel.addRow(new Object[] { sName, sn, bk.name, "Book Damaged",
+                        String.format("₱%.2f", totalFine), pen.date, "Pending" });
+                savePenalties();
+                String msg = "Marked Damaged.\nFine assigned to #" + sn +
+                        "\nReplacement Cost: ₱" + String.format("%.2f", bk.price);
+                if (overdueFine > 0)
+                    msg += "\nOverdue Fine Stacked: ₱" + String.format("%.2f", overdueFine);
+                msg += "\nTotal Fine: ₱" + String.format("%.2f", totalFine);
+                JOptionPane.showMessageDialog(null, msg);
+            } else {
+                JOptionPane.showMessageDialog(null, "Book marked as Damaged. No student assigned.");
+            }
+        });
+
+        bot.add(add);
+        bot.add(es);
+        bot.add(dmg);
+        p.add(bot, BorderLayout.SOUTH);
+        return p;
+    }
+
+    JPanel buildStudentsTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(new EmptyBorder(12, 14, 12, 14));
+        p.setBackground(LIGHT);
+        JTable t = styledTable(studentModel);
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                applyFilter(studentModel, t, null, tf.getText().trim(), 0, 0, 1, 2, 3);
+            }
+        });
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 8, 0));
+        top.add(new JLabel(" Search: "), BorderLayout.WEST);
+        top.add(tf, BorderLayout.CENTER);
+        p.add(top, BorderLayout.NORTH);
+        p.add(scrollTable(t), BorderLayout.CENTER);
+        return p;
+    }
+
+    JPanel buildTransactionTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(new EmptyBorder(12, 14, 12, 14));
+        p.setBackground(LIGHT);
+
+        // Notification banner at top
+        JPanel notifWrapper = new JPanel(new BorderLayout());
+        notifWrapper.setOpaque(false);
+        notifWrapper.add(buildAdminNotificationBanner(), BorderLayout.CENTER);
+
+        JTable table = styledTransTable(transModel);
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                applyFilter(transModel, table, null, tf.getText().trim(), 0, 0, 1, 3);
+            }
+        });
+
+        // Color legend
+        JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
+        legend.setOpaque(false);
+        legend.add(new JLabel("Color Key:") {
+            {
+                setFont(new Font("Segoe UI", Font.BOLD, 11));
+            }
+        });
+        for (Object[] leg : new Object[][] {
+                { ROW_GREEN, "Active" }, { ROW_YELLOW, "Due Soon" }, { ROW_ORANGE, "Due Today/Tomorrow" },
+                { ROW_RED, "Overdue" }, { ROW_GRAY, "Returned" } }) {
+            JLabel lbl = new JLabel("  " + leg[1] + "  ");
+            lbl.setBackground((Color) leg[0]);
+            lbl.setOpaque(true);
+            lbl.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            lbl.setBorder(new LineBorder(Color.LIGHT_GRAY, 1));
+            legend.add(lbl);
+        }
+
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 4, 0));
+        top.add(new JLabel(" Search: "), BorderLayout.WEST);
+        top.add(tf, BorderLayout.CENTER);
+
+        JPanel north = new JPanel(new BorderLayout(0, 4));
+        north.setOpaque(false);
+        north.add(notifWrapper, BorderLayout.NORTH);
+        north.add(top, BorderLayout.CENTER);
+        north.add(legend, BorderLayout.SOUTH);
+
+        p.add(north, BorderLayout.NORTH);
+        p.add(scrollTable(table), BorderLayout.CENTER);
+
+        JPanel bot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        bot.setOpaque(false);
+        JButton bor = smallBtn(" Borrow Book (Admin)", BLUE);
+        JButton ret = smallBtn(" Return Book", GREEN);
+        JButton computeBtn = smallBtn(" Compute & Record Overdue Fine", ORANGE);
+
+        bor.addActionListener(e -> borrowBook());
+
+        ret.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(null, "Select a transaction row first.");
+                return;
+            }
+            int mr = table.convertRowIndexToModel(row);
+            Transaction t = transactions.get(mr);
+            if (t.returned) {
+                JOptionPane.showMessageDialog(null, "Already returned.");
+                return;
+            }
+
+            // If overdue, auto-record overdue fine on return
+            double overdueFine = t.computeOverdueFine();
+            if (overdueFine > 0) {
+                int confirm = JOptionPane.showConfirmDialog(null,
+                        "This book is OVERDUE by " + t.daysOverdue() + " day(s).\n" +
+                                "Computed overdue fine: ₱" + String.format("%.2f", overdueFine) + "\n\n" +
+                                "Record this fine automatically and proceed with return?",
+                        "Overdue Fine on Return", JOptionPane.YES_NO_OPTION);
+                if (confirm == JOptionPane.YES_OPTION) {
+                    Student st = findStudent(t.studentNum);
+                    String sName = st != null ? st.name : t.student;
+                    Penalty pen = new Penalty(sName, t.studentNum, t.bookName, "Overdue Return", overdueFine);
+                    penalties.add(pen);
+                    penaltyModel.addRow(new Object[] { sName, t.studentNum, t.bookName, "Overdue Return",
+                            String.format("₱%.2f", overdueFine), pen.date, "Pending" });
+                    savePenalties();
+                }
+            }
+
+            t.returned = true;
+            t.returnedDate = LocalDate.now().toString();
+            Book bk = findBook(t.bookNo);
+            if (bk != null) {
+                bk.stock++;
+                int br = bookModelRow(bk.no);
+                if (br >= 0) {
+                    bookModel.setValueAt(bk.stock, br, 4);
+                    bookModel.setValueAt(bk.status(), br, 6);
+                }
+                saveBooks();
+            }
+            transModel.setValueAt(t.returnedDate, mr, 6);
+            transModel.setValueAt(t.statusLabel(), mr, 7);
+            saveTransactions();
+            // Recalculate warning level — may decrease after return
+            recalculateWarningOnReturn(t.studentNum);
+            JOptionPane.showMessageDialog(null, "Book returned on " + t.returnedDate + ". Stock restored.");
+        });
+
+        computeBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(null, "Select an overdue transaction row first.");
+                return;
+            }
+            int mr = table.convertRowIndexToModel(row);
+            Transaction t = transactions.get(mr);
+            if (t.returned) {
+                JOptionPane.showMessageDialog(null, "Book already returned.");
+                return;
+            }
+            long days = t.daysOverdue();
+            if (days <= 0) {
+                JOptionPane.showMessageDialog(null, "This transaction is not yet overdue.");
+                return;
+            }
+            double fine = t.computeOverdueFine();
+            int confirm = JOptionPane.showConfirmDialog(null,
+                    "Student: " + t.student + "\nBook: " + t.bookName +
+                            "\nDays Overdue: " + days + "\nComputed Fine: ₱" + String.format("%.2f", fine) +
+                            "\n\nRecord this overdue fine as a pending penalty?",
+                    "Record Overdue Fine", JOptionPane.YES_NO_OPTION);
+            if (confirm != JOptionPane.YES_OPTION)
+                return;
+            Student st = findStudent(t.studentNum);
+            String sName = st != null ? st.name : t.student;
+            Penalty pen = new Penalty(sName, t.studentNum, t.bookName, "Overdue Return", fine);
+            penalties.add(pen);
+            savePenalties();
+            penaltyModel.addRow(new Object[] { sName, t.studentNum, t.bookName, "Overdue Return",
+                    String.format("₱%.2f", fine), pen.date, "Pending" });
+            JOptionPane.showMessageDialog(null,
+                    "Overdue fine of ₱" + String.format("%.2f", fine) + " recorded for " + sName + ".");
+        });
+
+        bot.add(bor);
+        bot.add(ret);
+        bot.add(computeBtn);
+        p.add(bot, BorderLayout.SOUTH);
+        return p;
+    }
+
+    JPanel buildPenaltyTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(new EmptyBorder(12, 14, 12, 14));
+        p.setBackground(LIGHT);
+        JTable table = styledTable(penaltyModel);
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                applyFilter(penaltyModel, table, null, tf.getText().trim(), 0, 0, 1, 2);
+            }
+        });
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 8, 0));
+        top.add(new JLabel(" Search: "), BorderLayout.WEST);
+        top.add(tf, BorderLayout.CENTER);
+        p.add(top, BorderLayout.NORTH);
+        p.add(scrollTable(table), BorderLayout.CENTER);
+
+        JPanel bot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        bot.setOpaque(false);
+        JButton add = smallBtn(" Add Penalty", RED);
+        JButton settle = smallBtn(" Mark Settled", GREEN);
+        JButton lost = smallBtn(" Mark Book Lost", new Color(100, 50, 0));
+
+        add.addActionListener(e -> {
+            JTextField sNum = new JTextField(), bName = new JTextField(), amt = new JTextField("500");
+            JComboBox<String> reason = new JComboBox<>(
+                    new String[] { "Book Damaged", "Book Lost", "Overdue Return", "Other" });
+            if (JOptionPane.showConfirmDialog(null, new Object[] {
+                    "Student Number:", sNum, "Book Name:", bName, "Reason:", reason, "Fine Amount (₱):", amt },
+                    "Add Penalty", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+                return;
+            if (sNum.getText().trim().isEmpty() || bName.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(null, "Student number and book name required.", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            double amount;
+            try {
+                amount = Double.parseDouble(amt.getText().trim());
+                if (amount < 0)
+                    throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(null, "Enter a valid amount.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            Student st = findStudent(sNum.getText().trim());
+            String sName = st != null ? st.name : sNum.getText().trim();
+            Penalty pen = new Penalty(sName, sNum.getText().trim(), bName.getText().trim(),
+                    (String) reason.getSelectedItem(), amount);
+            penalties.add(pen);
+            savePenalties();
+            penaltyModel.addRow(new Object[] { sName, sNum.getText().trim(), bName.getText().trim(),
+                    reason.getSelectedItem(), String.format("₱%.2f", amount), pen.date, "Pending" });
+            JOptionPane.showMessageDialog(null, "Penalty recorded for " + sName + ".");
+        });
+
+        settle.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(null, "Select a penalty row first.");
+                return;
+            }
+            int mr = table.convertRowIndexToModel(row);
+            Penalty pen = penalties.get(mr);
+            if (pen.settled) {
+                JOptionPane.showMessageDialog(null, "Already settled.");
+                return;
+            }
+            if (JOptionPane.showConfirmDialog(null,
+                    "Settle penalty for " + pen.student + "?\nBook: " + pen.bookName +
+                            "\nAmount: ₱" + String.format("%.2f", pen.amount),
+                    "Confirm Settlement", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION)
+                return;
+            pen.settled = true;
+            penaltyModel.setValueAt("Settled", mr, 6);
+            savePenalties();
+            JOptionPane.showMessageDialog(null, "Penalty settled! " + pen.student + " can borrow again.");
+        });
+
+        lost.addActionListener(e -> {
+            JTextField sNum = new JTextField(), bNo = new JTextField();
+            if (JOptionPane.showConfirmDialog(null, new Object[] { "Student Number:", sNum, "Book No (lost):", bNo },
+                    "Mark Book Lost", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+                return;
+            if (sNum.getText().trim().isEmpty() || bNo.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(null, "Both fields required.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            Student st = findStudent(sNum.getText().trim());
+            Book bk = findBook(bNo.getText().trim());
+            if (bk == null) {
+                JOptionPane.showMessageDialog(null, "Book No. not found.", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            String sName = st != null ? st.name : sNum.getText().trim();
+            // 2x price rule + overdue stacking
+            double overdueFine = 0;
+            Transaction activeTrans = transactions.stream()
+                    .filter(t -> t.bookNo.equals(bk.no) && t.studentNum.equals(sNum.getText().trim()) && !t.returned)
+                    .findFirst().orElse(null);
+            if (activeTrans != null && activeTrans.daysOverdue() > 0)
+                overdueFine = activeTrans.computeOverdueFine();
+            double lostFine = (bk.price * 2) + overdueFine;
+
+            Penalty pen = new Penalty(sName, sNum.getText().trim(), bk.name, "Book Lost", lostFine);
+            penalties.add(pen);
+            savePenalties();
+            penaltyModel.addRow(new Object[] { sName, sNum.getText().trim(), bk.name, "Book Lost",
+                    String.format("₱%.2f", lostFine), pen.date, "Pending" });
+            // Mark as returned so it clears from active transactions
+            if (activeTrans != null) {
+                activeTrans.returned = true;
+                activeTrans.returnedDate = LocalDate.now().toString();
+                int trow = transactions.indexOf(activeTrans);
+                if (trow >= 0) {
+                    transModel.setValueAt(activeTrans.returnedDate, trow, 6);
+                    transModel.setValueAt("Returned", trow, 7);
+                }
+                saveTransactions();
+            }
+            String msg = "Book Lost recorded.\nStudent: " + sName +
+                    "\nBook Price (x2): ₱" + String.format("%.2f", bk.price * 2);
+            if (overdueFine > 0)
+                msg += "\nOverdue Fine Stacked: ₱" + String.format("%.2f", overdueFine);
+            msg += "\nTotal Fine: ₱" + String.format("%.2f", lostFine) + "\n\nBorrowing blocked until fully settled.";
+            JOptionPane.showMessageDialog(null, msg);
+        });
+
+        bot.add(add);
+        bot.add(settle);
+        bot.add(lost);
+        p.add(bot, BorderLayout.SOUTH);
+        return p;
+    }
+
+    // ── STUDENT SEARCH TAB ────────────────────────
+    JPanel buildStudentSearchTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 12));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(20, 24, 20, 24));
+        JLabel title = new JLabel(" Student Search — View Transactions & Penalties");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        title.setForeground(NAVY);
+        title.setBorder(new EmptyBorder(0, 0, 10, 0));
+        p.add(title, BorderLayout.NORTH);
+
+        JPanel searchRow = new JPanel(new BorderLayout(8, 0));
+        searchRow.setOpaque(false);
+        searchRow.setBorder(new EmptyBorder(0, 0, 10, 0));
+        JTextField tf = new JTextField();
+        tf.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(6, 10, 6, 10)));
+        JButton btn = smallBtn(" Search", NAVY);
+        searchRow.add(new JLabel("Enter Student Number: "), BorderLayout.WEST);
+        searchRow.add(tf, BorderLayout.CENTER);
+        searchRow.add(btn, BorderLayout.EAST);
+
+        JPanel infoCard = new JPanel(new GridLayout(1, 5, 10, 0));
+        infoCard.setBackground(WHITE);
+        infoCard.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(200, 210, 230), 1),
+                new EmptyBorder(14, 18, 14, 18)));
+        JLabel[] info = new JLabel[5];
+        String[] ik = { "Student No:", "Name:", "Program:", "Warning Level:", "Borrow Status:" };
+        for (int i = 0; i < 5; i++) {
+            JPanel cell = new JPanel(new GridLayout(2, 1));
+            cell.setOpaque(false);
+            JLabel k = new JLabel(ik[i]);
+            k.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            k.setForeground(new Color(90, 100, 120));
+            info[i] = new JLabel("—");
+            info[i].setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            cell.add(k);
+            cell.add(info[i]);
+            infoCard.add(cell);
+        }
+
+        DefaultTableModel sTrans = new DefaultTableModel(
+                new String[] { "Book No", "Book Name", "Borrow Date", "Expected Return", "Returned", "Status" }, 0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        DefaultTableModel sPen = new DefaultTableModel(new String[] { "Book", "Reason", "Amount", "Date", "Status" },
+                0) {
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        JTable transTable = styledTable(sTrans);
+        JTable penTable = styledTable(sPen);
+        transTable.setPreferredScrollableViewportSize(new Dimension(0, 150));
+        penTable.setPreferredScrollableViewportSize(new Dimension(0, 120));
+
+        JLabel tLbl = new JLabel(" Borrow Transactions");
+        tLbl.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        tLbl.setForeground(BLUE);
+        tLbl.setBorder(new EmptyBorder(10, 0, 4, 0));
+        JLabel pLbl = new JLabel(" Penalties");
+        pLbl.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        pLbl.setForeground(RED);
+        pLbl.setBorder(new EmptyBorder(10, 0, 4, 0));
+        JLabel statusLbl = new JLabel(" ");
+        statusLbl.setFont(new Font("Segoe UI", Font.BOLD, 13));
+
+        JPanel center = new JPanel();
+        center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+        center.setOpaque(false);
+        for (Component c : new Component[] { searchRow, infoCard, tLbl, scrollTable(transTable), pLbl,
+                scrollTable(penTable), statusLbl }) {
+            ((JComponent) c).setAlignmentX(Component.LEFT_ALIGNMENT);
+            center.add(c);
+        }
+        p.add(center, BorderLayout.CENTER);
+
+        Runnable search = () -> {
+            String q = tf.getText().trim();
+            if (q.isEmpty()) {
+                JOptionPane.showMessageDialog(p, "Enter a student number first.", "Notice",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            while (sTrans.getRowCount() > 0)
+                sTrans.removeRow(0);
+            while (sPen.getRowCount() > 0)
+                sPen.removeRow(0);
+            Student st = findStudent(q);
+            if (st == null) {
+                for (JLabel l : info)
+                    l.setText("—");
+                statusLbl.setText(" No student found: " + q);
+                statusLbl.setForeground(RED);
+                return;
+            }
+            info[0].setText(st.number);
+            info[1].setText(st.name);
+            info[2].setText(st.program);
+            info[3].setText(st.warningLabel());
+            info[3].setForeground(st.warningCount == 0 ? GREEN : st.warningCount >= 3 ? RED : GOLD);
+            boolean blocked = !canBorrow(q);
+            info[4].setText(blocked ? "BLOCKED" : "OK — Can Borrow");
+            info[4].setForeground(blocked ? RED : GREEN);
+            int tc = 0, pc = 0;
+            for (Transaction t : transactions)
+                if (t.studentNum.equals(q)) {
+                    sTrans.addRow(new Object[] { t.bookNo, t.bookName, t.borrowDate, t.expectedReturn,
+                            t.returnedDate.isEmpty() ? "—" : t.returnedDate, t.statusLabel() });
+                    tc++;
+                }
+            for (Penalty pen : penalties)
+                if (pen.studentNum.equals(q)) {
+                    sPen.addRow(new Object[] { pen.bookName, pen.reason, String.format("₱%.2f", pen.amount), pen.date,
+                            pen.settled ? "Settled" : "Pending" });
+                    pc++;
+                }
+            statusLbl.setText(" Found: " + st.name + " | " + tc + " transaction(s) | " + pc + " penalty record(s)"
+                    + (tc == 0 && pc == 0 ? " | No records yet." : ""));
+            statusLbl.setForeground(NAVY);
+        };
+        btn.addActionListener(e -> search.run());
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_ENTER)
+                    search.run();
+            }
+        });
+        return p;
+    }
+
+    // ── BORROW BOOK (ADMIN) ───────────────────────
+    void borrowBook() {
+        JTextField sNum = new JTextField(), bNo = new JTextField(),
+                exp = new JTextField(LocalDate.now().plusDays(7).toString());
+        if (JOptionPane.showConfirmDialog(null, new Object[] {
+                "Student Number:", sNum, "Book No:", bNo, "Expected Return (YYYY-MM-DD):", exp },
+                "Borrow Book (Admin)", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        if (sNum.getText().trim().isEmpty() || bNo.getText().trim().isEmpty() || exp.getText().trim().isEmpty()) {
+            JOptionPane.showMessageDialog(null, "All fields required.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        Student s = findStudent(sNum.getText().trim());
+        if (s == null) {
+            JOptionPane.showMessageDialog(null, "Student not found.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (!canBorrow(s.number)) {
+            JOptionPane.showMessageDialog(null,
+                    s.name + " has unsettled penalties or is critically blocked.\nBorrowing blocked.", "Blocked",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        Book bk = findBook(bNo.getText().trim());
+        if (bk == null) {
+            JOptionPane.showMessageDialog(null, "Book No. not found.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (bk.damaged) {
+            JOptionPane.showMessageDialog(null, "Book is Damaged.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (bk.stock <= 0) {
+            JOptionPane.showMessageDialog(null, "Book has 0 stock.", "Not Available", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        bk.stock--;
+        int br = bookModelRow(bk.no);
+        if (br >= 0) {
+            bookModel.setValueAt(bk.stock, br, 4);
+            bookModel.setValueAt(bk.status(), br, 6);
+        }
+        saveBooks();
+        Transaction t = new Transaction();
+        t.student = s.name;
+        t.studentNum = s.number;
+        t.bookNo = bk.no;
+        t.bookName = bk.name;
+        t.author = bk.author;
+        t.borrowDate = LocalDate.now().toString();
+        t.expectedReturn = exp.getText().trim();
+        transactions.add(t);
+        transModel.addRow(new Object[] { s.name, s.number, bk.no, bk.name,
+                t.borrowDate, t.expectedReturn, "—", t.statusLabel() });
+        saveTransactions();
+        JOptionPane.showMessageDialog(null,
+                "Borrow recorded!\nStudent: " + s.name + "\nBook: " + bk.name + "\nReturn by: " + t.expectedReturn);
+    }
+
+    void addBook() {
+        JTextField no = new JTextField(), name = new JTextField(),
+                author = new JTextField(), stock = new JTextField(), price = new JTextField("500");
+        JComboBox<String> cat = new JComboBox<>(Arrays.copyOfRange(CATEGORIES, 1, CATEGORIES.length));
+        if (JOptionPane.showConfirmDialog(null, new Object[] {
+                "Book No:", no, "Book Name:", name, "Author:", author,
+                "Category:", cat, "Initial Stock:", stock, "Book Price (₱):", price },
+                "Add Book", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != 0)
+            return;
+        if (no.getText().trim().isEmpty() || name.getText().trim().isEmpty() || author.getText().trim().isEmpty()
+                || stock.getText().trim().isEmpty()) {
+            JOptionPane.showMessageDialog(null, "All fields required.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        int st;
+        double pr;
+        try {
+            st = Integer.parseInt(stock.getText().trim());
+            if (st < 0)
+                throw new NumberFormatException();
+            pr = Double.parseDouble(price.getText().trim());
+            if (pr < 0)
+                throw new NumberFormatException();
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(null, "Enter valid stock and price.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        for (Book b : books) {
+            if (b.no.equalsIgnoreCase(no.getText().trim())) {
+                JOptionPane.showMessageDialog(null, "Book No. already exists!", "Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+        Book bk = new Book(no.getText().trim(), name.getText().trim(), author.getText().trim(),
+                (String) cat.getSelectedItem(), st, pr);
+        books.add(bk);
+        bookModel.addRow(new Object[] { bk.no, bk.name, bk.author, bk.category, bk.stock,
+                String.format("₱%.2f", bk.price), bk.status() });
+        saveBooks();
+        JOptionPane.showMessageDialog(null, "Book added: " + bk.name);
+    }
+
+    // ── PUBLIC BOOK VIEW ──────────────────────────
+    JPanel bookPublicView() {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBackground(LIGHT);
+        p.setBorder(new EmptyBorder(20, 26, 20, 26));
+        JLabel title = new JLabel(" Browse Books — RTU Library");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        title.setForeground(NAVY);
+        title.setBorder(new EmptyBorder(0, 0, 10, 0));
+        JTable table = styledTable(bookModel);
+        JComboBox<String> catBox = new JComboBox<>(CATEGORIES);
+        catBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        JTextField tf = new JTextField();
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(180, 190, 210), 1, true),
+                new EmptyBorder(4, 8, 4, 8)));
+        Runnable f = () -> applyFilter(bookModel, table, (String) catBox.getSelectedItem(), tf.getText().trim(), 3, 0,
+                1, 2, 3);
+        catBox.addActionListener(e -> f.run());
+        tf.addKeyListener(new KeyAdapter() {
+            public void keyReleased(KeyEvent e) {
+                f.run();
+            }
+        });
+        JPanel catP = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        catP.setOpaque(false);
+        catP.add(new JLabel(" Category: "));
+        catP.add(catBox);
+        JPanel srP = new JPanel(new BorderLayout(4, 0));
+        srP.setOpaque(false);
+        srP.add(new JLabel(" Search: "), BorderLayout.WEST);
+        srP.add(tf, BorderLayout.CENTER);
+        JPanel top = new JPanel(new BorderLayout(8, 0));
+        top.setOpaque(false);
+        top.setBorder(new EmptyBorder(0, 0, 8, 0));
+        top.add(catP, BorderLayout.WEST);
+        top.add(srP, BorderLayout.CENTER);
+        JPanel north = new JPanel(new BorderLayout());
+        north.setOpaque(false);
+        north.add(title, BorderLayout.NORTH);
+        north.add(top, BorderLayout.CENTER);
+        JButton back = smallBtn("Back to Home", NAVY);
+        back.addActionListener(e -> card.show(mainPanel, "HOME"));
+        JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        south.setOpaque(false);
+        south.add(back);
+        JLabel note = new JLabel(" Log in as a Student to borrow books.");
+        note.setFont(new Font("Segoe UI", Font.ITALIC, 12));
+        note.setForeground(new Color(100, 110, 130));
+        south.add(note);
+        p.add(north, BorderLayout.NORTH);
+        p.add(scrollTable(table), BorderLayout.CENTER);
+        p.add(south, BorderLayout.SOUTH);
+        return p;
+    }
+
+    // ── MAIN ──────────────────────────────────────
+    public static void main(String[] args) {
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception ignored) {
+        }
+        SwingUtilities.invokeLater(LibraryManagementSystem::new);
+    }
+}
